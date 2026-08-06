@@ -1,0 +1,340 @@
+name: Bomiot Build
+
+env:
+  APP_NAME: "GreaterWMS"  # Application name (globally shared)
+  BASE_VERSION: "3.0.0"  # Base version number (globally shared)
+
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+
+      # Check-out repository
+      - uses: actions/checkout@v4
+
+      # Setup Python
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.11 # Version range or exact version of a Python version to use, using SemVer's version range syntax
+          architecture: 'x64' # optional x64 or x86. Defaults to x64 if not specified
+          cache: 'pip'
+          cache-dependency-path: |
+            **/requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pillow
+          pip install -r requirements.txt
+
+      - name: Generate discovered apps json (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: python -c "import sys; p='${{ github.workspace }}'; sys.path.insert(0, p); from discovered_apps import main; main(p)"
+
+      - name: Generate discovered apps json (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $p = '${{ github.workspace }}'.Replace('\', '/')
+          python -c "import sys; sys.path.insert(0, '$p'); from discovered_apps import main; main('$p')"
+
+      # Build python script into a single execute or app folder (windows)
+      - uses: Nuitka/Nuitka-Action@main
+        if: matrix.os == 'windows-latest'
+        with:
+          jobs: 16
+          nuitka-version: main
+          script-name: launcher.py
+          mode: standalone
+          company-name: ${{ env.APP_NAME }}
+          product-name: ${{ env.APP_NAME }}
+          file-version: ${{ env.BASE_VERSION }}
+          product-version: ${{ env.BASE_VERSION }}
+          copyright: Copyright (c) 2020 ${{ env.APP_NAME }}
+          windows-icon-from-ico: logo.ico
+          windows-console-mode: disable
+          lto: yes
+          enable-plugins: tk-inter
+          # Included data files
+          include-data-files: |
+            setup.ini=setup.ini
+            splash.png=splash.png
+            ${{ github.workspace }}/apps.json=apps.json
+            greaterwms/server.py=greaterwms/server.py
+            greaterwms/receiver.py=greaterwms/receiver.py
+            greaterwms/files.py=greaterwms/files.py
+            greaterwms/task.py=greaterwms/task.py
+          # Included packages
+          include-package-data: |
+            bomiot
+            django
+            fastapi
+            flask
+            orjson
+            uvicorn
+            pandas
+            openpyxl
+            watchdog
+            tomlkit
+            psutil
+            xlsxwriter
+            requests
+            httptools
+            aiofiles
+            starlette
+            bomiot_asgi
+            bomiot_message
+            bomiot_token
+            django_filters
+            rest_framework
+            rest_framework_csv
+            django_apscheduler
+            corsheaders
+            greaterwms
+            bomiot_test
+          include-package: |
+            bomiot
+            django
+            fastapi
+            flask
+            orjson
+            uvicorn
+            pandas
+            openpyxl
+            watchdog
+            tomlkit
+            psutil
+            xlsxwriter
+            requests
+            httptools
+            aiofiles
+            starlette
+            bomiot_asgi
+            bomiot_message
+            django_filters
+            rest_framework
+            rest_framework_csv
+            django_apscheduler
+            corsheaders
+            greaterwms
+            bomiot_test
+          # Included modules
+          include-module: |
+            django.core.management
+          nofollow-import-to: |
+            pandas.tests
+          # Special module parameter for Django
+          module-parameter: django-settings-module=bomiot.server.server.settings
+        env:
+          DJANGO_SETTINGS_MODULE: "bomiot.server.server.settings"
+          RUN_MAIN: "true"
+          PYTHONPATH: "${{ github.workspace }};${{ github.workspace }}/bomiot"
+          PYTHONIOENCODING: "utf-8"
+
+      # Build python script into a single execute or app folder (macos)
+      - uses: Nuitka/Nuitka-Action@main
+        if: matrix.os == 'macos-latest'
+        with:
+          jobs: 16
+          nuitka-version: main
+          script-name: launcher.py
+          mode: standalone
+          company-name: ${{ env.APP_NAME }}
+          product-name: ${{ env.APP_NAME }}
+          file-version: ${{ env.BASE_VERSION }}
+          product-version: ${{ env.BASE_VERSION }}
+          copyright: Copyright (c) 2020 ${{ env.APP_NAME }}
+          macos-app-icon: logo.icns
+          macos-signed-app-name: ${{ env.APP_NAME }}
+          macos-app-name: ${{ env.APP_NAME }}
+          macos-app-version: ${{ env.BASE_VERSION }}
+          macos-app-console-mode: disable
+          enable-plugins: tk-inter
+          # Included data files
+          include-data-files: |
+            setup.ini=setup.ini
+            splash.png=splash.png
+            ${{ github.workspace }}/apps.json=apps.json
+            greaterwms/server.py=greaterwms/server.py
+            greaterwms/receiver.py=greaterwms/receiver.py
+            greaterwms/files.py=greaterwms/files.py
+            greaterwms/task.py=greaterwms/task.py
+          # Included packages
+          include-package-data: |
+            bomiot
+            django
+            fastapi
+            flask
+            orjson
+            uvicorn
+            pandas
+            openpyxl
+            watchdog
+            tomlkit
+            psutil
+            xlsxwriter
+            requests
+            httptools
+            aiofiles
+            starlette
+            bomiot_asgi
+            bomiot_message
+            bomiot_token
+            django_filters
+            rest_framework
+            rest_framework_csv
+            django_apscheduler
+            corsheaders
+            greaterwms
+            bomiot_test
+          include-package: |
+            bomiot
+            django
+            fastapi
+            flask
+            orjson
+            uvicorn
+            pandas
+            openpyxl
+            watchdog
+            tomlkit
+            psutil
+            xlsxwriter
+            requests
+            httptools
+            aiofiles
+            starlette
+            bomiot_asgi
+            bomiot_message
+            django_filters
+            rest_framework
+            rest_framework_csv
+            django_apscheduler
+            corsheaders
+            greaterwms
+            bomiot_test
+          # Included modules
+          include-module: |
+            django.core.management
+          nofollow-import-to: |
+            pandas.tests
+          # Special module parameter for Django
+          module-parameter: django-settings-module=bomiot.server.server.settings
+        env:
+          DJANGO_SETTINGS_MODULE: "bomiot.server.server.settings"
+          RUN_MAIN: "true"
+          PYTHONPATH: "${{ github.workspace }}:${{ github.workspace }}/bomiot"
+          PYTHONIOENCODING: "utf-8"
+
+      # Build python script into a single execute or app folder (Ubuntu)
+      - uses: Nuitka/Nuitka-Action@main
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          jobs: 16
+          nuitka-version: main
+          script-name: launcher.py
+          mode: standalone
+          company-name: ${{ env.APP_NAME }}
+          product-name: ${{ env.APP_NAME }}
+          file-version: ${{ env.BASE_VERSION }}
+          product-version: ${{ env.BASE_VERSION }}
+          copyright: Copyright (c) 2020 ${{ env.APP_NAME }}
+          linux-icon: logo.png
+          lto: yes
+          enable-plugins: tk-inter
+          # Included data files
+          include-data-files: |
+            setup.ini=setup.ini
+            splash.png=splash.png
+            ${{ github.workspace }}/apps.json=apps.json
+            greaterwms/server.py=greaterwms/server.py
+            greaterwms/receiver.py=greaterwms/receiver.py
+            greaterwms/files.py=greaterwms/files.py
+          # Included packages
+          include-package-data: |
+            bomiot
+            django
+            fastapi
+            flask
+            orjson
+            uvicorn
+            pandas
+            openpyxl
+            watchdog
+            tomlkit
+            psutil
+            xlsxwriter
+            requests
+            httptools
+            aiofiles
+            starlette
+            bomiot_asgi
+            bomiot_message
+            django_filters
+            rest_framework
+            rest_framework_csv
+            django_apscheduler
+            corsheaders
+            greaterwms
+            bomiot_test
+          include-package: |
+            bomiot
+            django
+            fastapi
+            flask
+            orjson
+            uvicorn
+            pandas
+            openpyxl
+            watchdog
+            tomlkit
+            psutil
+            xlsxwriter
+            requests
+            httptools
+            aiofiles
+            starlette
+            bomiot_asgi
+            bomiot_message
+            django_filters
+            rest_framework
+            rest_framework_csv
+            django_apscheduler
+            corsheaders
+            greaterwms
+            bomiot_test
+          # Included modules
+          include-module: |
+            django.core.management
+          nofollow-import-to: |
+            pandas.tests
+          # Special module parameter for Django
+          module-parameter: django-settings-module=bomiot.server.server.settings
+        env:
+          DJANGO_SETTINGS_MODULE: "bomiot.server.server.settings"
+          RUN_MAIN: "true"
+          PYTHONPATH: "${{ github.workspace }}:${{ github.workspace }}/bomiot"
+          PYTHONIOENCODING: "utf-8"
+
+      # Uploads artifact
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.BASE_VERSION }}-${{ runner.os }}
+          path: |
+            build/*.exe
+            build/*.bin
+            build/*.app/**/*
+            build/*.dist/**/*
+          include-hidden-files: true
