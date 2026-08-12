@@ -63,7 +63,7 @@ jobs:
           product-version: ${{ env.BASE_VERSION }}
           copyright: Copyright (c) 2020 ${{ env.APP_NAME }}
           windows-icon-from-ico: logo.ico
-          windows-console-mode: force
+          # windows-console-mode: force
           lto: yes
           enable-plugins: tk-inter
           # Included data files

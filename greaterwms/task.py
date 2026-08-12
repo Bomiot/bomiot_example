@@ -1,4 +1,4 @@
-﻿
+﻿import os
 
 def example_job(**kwargs):
     """Scheduled example job"""
