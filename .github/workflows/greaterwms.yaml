@@ -16,7 +16,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest, ubuntu-22.04]
 
     steps:
 
@@ -63,7 +63,7 @@ jobs:
           product-version: ${{ env.BASE_VERSION }}
           copyright: Copyright (c) 2020 ${{ env.APP_NAME }}
           windows-icon-from-ico: logo.ico
-          # windows-console-mode: force
+          windows-console-mode: disable
           lto: yes
           enable-plugins: tk-inter
           # Included data files

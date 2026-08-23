@@ -80,13 +80,14 @@ if __name__ == "__main__":
     if auth_key_path.exists():
         auth_key_path.unlink()
     while True:
-        key_code = encrypt_info()
-        if '/' in key_code:
+        community_key, sponsor_key = encrypt_info()
+        if '/' in community_key or '/' in sponsor_key:
             continue
         else:
             break
     with open(auth_key_path, "w", encoding="utf-8") as f:
-        f.write(f'KEY = "{key_code}"\n')
+        f.write(f'COMMUNITY_KEY = "{community_key}"\n')
+        f.write(f'SPONSOR_KEY = "{sponsor_key}"\n')
 
     from django.core.management import call_command
     from django.apps import apps

@@ -3,6 +3,6 @@
 def example_job(**kwargs):
     """Scheduled example job"""
     from datetime import datetime
-    print(os.environ.get('IS_LAN', '1111'))
+    print(os.environ.get('AUTHED', '1111'))
     print(f"This is a scheduled task test ----------- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     # Your business logic here
