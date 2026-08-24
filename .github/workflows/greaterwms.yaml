@@ -239,7 +239,7 @@ jobs:
 
       # Build python script into a single execute or app folder (Ubuntu)
       - uses: Nuitka/Nuitka-Action@main
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-22.04'
         with:
           jobs: 16
           nuitka-version: 4.1.3
