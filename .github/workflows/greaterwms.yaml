@@ -63,7 +63,7 @@ jobs:
           product-version: ${{ env.BASE_VERSION }}
           copyright: Copyright (c) 2020 ${{ env.APP_NAME }}
           windows-icon-from-ico: logo.ico
-          windows-console-mode: disable
+          # windows-console-mode: disable
           lto: yes
           enable-plugins: tk-inter
           # Included data files
@@ -83,6 +83,7 @@ jobs:
             flask
             orjson
             uvicorn
+            requests
             pandas
             openpyxl
             watchdog
@@ -110,6 +111,7 @@ jobs:
             flask
             orjson
             uvicorn
+            requests
             pandas
             openpyxl
             watchdog
