@@ -6,7 +6,7 @@ from greaterwms.auth.models import AuthModel
 
 User = get_user_model()
 
-async def test(request):
+async def auth_check(request):
     authed = request.META.get('HTTP_AUTHED') or request.headers.get('Authed') or request.headers.get('authed')
     print(authed)
     if not authed:
