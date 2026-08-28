@@ -379,13 +379,22 @@ jobs:
             bash -c '
               set -eux
               apt-get update
+              # Pillow/numpy/pandas 源码编译/二进制依赖（jpeg/png/zlib/blas/openblas 等）
+              # + Nuitka/patchelf/编译器
               apt-get install -y --no-install-recommends \
                 build-essential gcc g++ python3-dev \
-                patchelf pkg-config ccache curl
+                patchelf pkg-config ccache curl ca-certificates \
+                libjpeg-dev libpng-dev zlib1g-dev libfreetype6-dev \
+                liblcms2-dev libopenjp2-7-dev libtiff-dev \
+                libwebp-dev libxcb1-dev tk-dev \
+                libopenblas-dev gfortran
               python -m pip install --upgrade pip setuptools wheel
+              # 在 ARM 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
+              # 经常只有 x64 wheel，缺 aarch64/armv7 wheel 导致 pip 直接失败。
+              # 这里把所有 bomiot_* 的 == 精确版本锁改成 >=，让 pip 自己挑可用的最高版本。
+              sed -i -E "s/^(bomiot_[a-z_]+)==.*/\1>=0.0.1/" requirements.txt
+              cat requirements.txt | grep bomiot_ || true
               pip install pillow
-              # 安装项目依赖。注意：bomiot_asgi / bomiot_token / bomiot_message
-              # 需要已经在 PyPI 发布了 manylinux_aarch64 wheel，否则此步会失败。
               pip install -r requirements.txt || { echo "[FATAL] pip install failed (probably missing aarch64 wheels for bomiot_* packages)"; exit 1; }
               pip install nuitka==4.1.3 ordered-set zstandard
               python -c "import sys; sys.path.insert(0, \"$(pwd)\"); from discovered_apps import main; main(\"$(pwd)\")"
@@ -504,13 +513,22 @@ jobs:
             bash -c '
               set -eux
               apt-get update
+              # ARMv7 下 Pillow/numpy/pandas 基本没有预构建 wheel，
+              # 必须先装上 -dev 包让它们能从源码成功编译。
               apt-get install -y --no-install-recommends \
                 build-essential gcc g++ python3-dev \
-                patchelf pkg-config ccache curl
+                patchelf pkg-config ccache curl ca-certificates \
+                libjpeg-dev libpng-dev zlib1g-dev libfreetype6-dev \
+                liblcms2-dev libopenjp2-7-dev libtiff-dev \
+                libwebp-dev libxcb1-dev tk-dev \
+                libopenblas-dev gfortran
               python -m pip install --upgrade pip setuptools wheel
+              # 在 ARMv7 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
+              # 经常只有 x64 wheel，缺 armv7 wheel 导致 pip 直接失败。
+              # 这里把所有 bomiot_* 的 == 精确版本锁改成 >=，让 pip 自己挑可用的最高版本。
+              sed -i -E "s/^(bomiot_[a-z_]+)==.*/\1>=0.0.1/" requirements.txt
+              cat requirements.txt | grep bomiot_ || true
               pip install pillow
-              # 安装依赖。bomiot_asgi / bomiot_token / bomiot_message / orjson
-              # 必须已经在 PyPI 发布了 manylinux_armv7l wheel，否则此步会失败。
               pip install -r requirements.txt || { echo "[FATAL] pip install failed (probably missing armv7l wheels for bomiot_* packages)"; exit 1; }
               pip install nuitka==4.1.3 ordered-set zstandard
               python -c "import sys; sys.path.insert(0, \"$(pwd)\"); from discovered_apps import main; main(\"$(pwd)\")"
