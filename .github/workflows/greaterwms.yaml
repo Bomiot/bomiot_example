@@ -387,7 +387,7 @@ jobs:
                 libjpeg-dev libpng-dev zlib1g-dev libfreetype6-dev \
                 liblcms2-dev libopenjp2-7-dev libtiff-dev \
                 libwebp-dev libxcb1-dev tk-dev \
-                libopenblas-dev gfortran
+                libopenblas-dev gfortran libffi-dev
               python -m pip install --upgrade pip setuptools wheel
               # 在 ARM 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
               # 经常只有 x64 wheel，缺 aarch64/armv7 wheel 导致 pip 直接失败。
@@ -521,7 +521,7 @@ jobs:
                 libjpeg-dev libpng-dev zlib1g-dev libfreetype6-dev \
                 liblcms2-dev libopenjp2-7-dev libtiff-dev \
                 libwebp-dev libxcb1-dev tk-dev \
-                libopenblas-dev gfortran
+                libopenblas-dev gfortran libffi-dev
               python -m pip install --upgrade pip setuptools wheel
               # 在 ARMv7 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
               # 经常只有 x64 wheel，缺 armv7 wheel 导致 pip 直接失败。
