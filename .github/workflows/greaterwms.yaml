@@ -361,33 +361,38 @@ jobs:
         with:
           platforms: arm64
 
-      # ccache 缓存：gcc 编译过的 .o 文件命中缓存直接跳过，二次构建快 2~5 倍
-      - name: Restore ccache (arm64)
+      # Nuitka 缓存（官网文档：NUITKA_CACHE_DIR / NUITKA_CACHE_DIR_CCACHE 控制 ccache 等各类缓存目录）
+      # actions/cache 在两次构建间保存恢复，二次构建命中 ccache 快 2~5 倍
+      - name: Restore Nuitka caches (arm64)
         uses: actions/cache/restore@v4
         with:
-          path: ${{ runner.temp }}/ccache-arm64
-          key: ccache-arm64-n413-${{ hashFiles('requirements.txt') }}
-          restore-keys: ccache-arm64-n413-
+          path: |
+            ${{ runner.temp }}/nuitka-cache-arm64
+          key: nuitka-cache-arm64-n413-${{ hashFiles('requirements.txt') }}
+          restore-keys: nuitka-cache-arm64-n413-
 
       - name: Build launcher inside arm64 Docker (Nuitka standalone)
         run: |
-          mkdir -p "${{ runner.temp }}/ccache-arm64"
+          mkdir -p "${{ runner.temp }}/nuitka-cache-arm64"
           docker run --rm --platform linux/arm64 \
             -v "${{ github.workspace }}":/workspace \
-            -v "${{ runner.temp }}/ccache-arm64":/ccache \
+            -v "${{ runner.temp }}/nuitka-cache-arm64":/nuitka-cache \
             -w /workspace \
             -e DJANGO_SETTINGS_MODULE="bomiot.server.server.settings" \
             -e RUN_MAIN="true" \
             -e PYTHONPATH="/workspace:/workspace/bomiot" \
             -e PYTHONIOENCODING="utf-8" \
-            -e CCACHE_DIR="/ccache" \
+            -e NUITKA_CACHE_DIR="/nuitka-cache" \
+            -e NUITKA_CACHE_DIR_CCACHE="/nuitka-cache/ccache" \
+            -e NUITKA_CCACHE_BINARY="/usr/bin/ccache" \
             -e CCACHE_MAXSIZE="2G" \
+            -e CCACHE_BASEDIR="/workspace" \
             python:3.11-slim-bookworm \
             bash -c '
               set -eux
               apt-get update
               # Pillow/numpy/pandas 源码编译/二进制依赖（jpeg/png/zlib/blas/openblas 等）
-              # + Nuitka/patchelf/编译器
+              # + Nuitka/patchelf/编译器 + ccache（官网推荐：gcc 下启用可显著加速重复构建）
               apt-get install -y --no-install-recommends \
                 build-essential gcc g++ python3-dev \
                 patchelf pkg-config ccache curl ca-certificates \
@@ -397,7 +402,7 @@ jobs:
                 libopenblas-dev gfortran libffi-dev
               ccache -z || true
               python -m pip install --upgrade pip setuptools wheel
-              # 创建 swap 空间防止链接阶段 OOM（QEMU 模拟 + 2574 文件链接非常吃内存）
+              # 创建 swap 空间防止链接阶段 OOM（QEMU 模拟 + 大量文件链接非常吃内存）
               fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
               # 在 ARM 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
               # 经常只有 x64 wheel，缺 aarch64/armv7 wheel 导致 pip 直接失败。
@@ -410,11 +415,13 @@ jobs:
               python -c "import sys; sys.path.insert(0, \"$(pwd)\"); from discovered_apps import main; main(\"$(pwd)\")"
               ls -la apps.json || true
 
+              # 官网：python -m nuitka 是推荐用法（避免 accidentally 用错 python）
+              # ccache / 下载 / bytecode / dll 依赖的缓存都由 NUITKA_CACHE_DIR 统一管理
+              # 不需要 --ccache flag（官网：Nuitka 会自动从 PATH 或 NUITKA_CCACHE_BINARY 发现 ccache）
               python -m nuitka \
                 --standalone \
                 --jobs=4 \
                 --lto=no \
-                --ccache \
                 --enable-plugin=tk-inter \
                 --include-data-files=setup.ini=setup.ini \
                 --include-data-files=splash.png=splash.png \
@@ -465,12 +472,12 @@ jobs:
               ccache -s || true
             '
 
-      - name: Save ccache (arm64)
+      - name: Save Nuitka caches (arm64)
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: ${{ runner.temp }}/ccache-arm64
-          key: ccache-arm64-n413-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/nuitka-cache-arm64
+          key: nuitka-cache-arm64-n413-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
 
       - name: Upload Artifact (Linux arm64)
         uses: actions/upload-artifact@v4
@@ -504,33 +511,39 @@ jobs:
         with:
           platforms: arm
 
-      # ccache 缓存：gcc 编译过的 .o 文件命中缓存直接跳过，二次构建快 2~5 倍
-      - name: Restore ccache (armv7)
+      # Nuitka 缓存（官网文档：NUITKA_CACHE_DIR / NUITKA_CACHE_DIR_CCACHE 控制 ccache 等各类缓存目录）
+      # actions/cache 在两次构建间保存恢复，二次构建命中 ccache 快 2~5 倍
+      - name: Restore Nuitka caches (armv7)
         uses: actions/cache/restore@v4
         with:
-          path: ${{ runner.temp }}/ccache-armv7
-          key: ccache-armv7-n413-${{ hashFiles('requirements.txt') }}
-          restore-keys: ccache-armv7-n413-
+          path: |
+            ${{ runner.temp }}/nuitka-cache-armv7
+          key: nuitka-cache-armv7-n413-${{ hashFiles('requirements.txt') }}
+          restore-keys: nuitka-cache-armv7-n413-
 
       - name: Build launcher inside armv7 Docker (Nuitka standalone)
         run: |
-          mkdir -p "${{ runner.temp }}/ccache-armv7"
+          mkdir -p "${{ runner.temp }}/nuitka-cache-armv7"
           docker run --rm --platform linux/arm/v7 \
             -v "${{ github.workspace }}":/workspace \
-            -v "${{ runner.temp }}/ccache-armv7":/ccache \
+            -v "${{ runner.temp }}/nuitka-cache-armv7":/nuitka-cache \
             -w /workspace \
             -e DJANGO_SETTINGS_MODULE="bomiot.server.server.settings" \
             -e RUN_MAIN="true" \
             -e PYTHONPATH="/workspace:/workspace/bomiot" \
             -e PYTHONIOENCODING="utf-8" \
-            -e CCACHE_DIR="/ccache" \
+            -e NUITKA_CACHE_DIR="/nuitka-cache" \
+            -e NUITKA_CACHE_DIR_CCACHE="/nuitka-cache/ccache" \
+            -e NUITKA_CCACHE_BINARY="/usr/bin/ccache" \
             -e CCACHE_MAXSIZE="2G" \
+            -e CCACHE_BASEDIR="/workspace" \
             python:3.11-slim-bookworm \
             bash -c '
               set -eux
               apt-get update
               # ARMv7 下 Pillow/numpy/pandas 基本没有预构建 wheel，
               # 必须先装上 -dev 包让它们能从源码成功编译。
+              # + ccache（官网推荐：gcc 下启用可显著加速重复构建）
               apt-get install -y --no-install-recommends \
                 build-essential gcc g++ python3-dev \
                 patchelf pkg-config ccache curl ca-certificates \
@@ -553,11 +566,13 @@ jobs:
               python -c "import sys; sys.path.insert(0, \"$(pwd)\"); from discovered_apps import main; main(\"$(pwd)\")"
               ls -la apps.json || true
 
+              # 官网：python -m nuitka 是推荐用法（避免 accidentally 用错 python）
+              # ccache / 下载 / bytecode / dll 依赖的缓存都由 NUITKA_CACHE_DIR 统一管理
+              # 不需要 --ccache flag（官网：Nuitka 会自动从 PATH 或 NUITKA_CCACHE_BINARY 发现 ccache）
               python -m nuitka \
                 --standalone \
                 --jobs=2 \
                 --lto=no \
-                --ccache \
                 --enable-plugin=tk-inter \
                 --include-data-files=setup.ini=setup.ini \
                 --include-data-files=splash.png=splash.png \
@@ -608,12 +623,12 @@ jobs:
               ccache -s || true
             '
 
-      - name: Save ccache (armv7)
+      - name: Save Nuitka caches (armv7)
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: ${{ runner.temp }}/ccache-armv7
-          key: ccache-armv7-n413-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/nuitka-cache-armv7
+          key: nuitka-cache-armv7-n413-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
 
       - name: Upload Artifact (Linux armv7)
         uses: actions/upload-artifact@v4
