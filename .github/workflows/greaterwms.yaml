@@ -361,15 +361,27 @@ jobs:
         with:
           platforms: arm64
 
+      # ccache 缓存：gcc 编译过的 .o 文件命中缓存直接跳过，二次构建快 2~5 倍
+      - name: Restore ccache (arm64)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache-arm64
+          key: ccache-arm64-n413-${{ hashFiles('requirements.txt') }}
+          restore-keys: ccache-arm64-n413-
+
       - name: Build launcher inside arm64 Docker (Nuitka standalone)
         run: |
+          mkdir -p "${{ runner.temp }}/ccache-arm64"
           docker run --rm --platform linux/arm64 \
             -v "${{ github.workspace }}":/workspace \
+            -v "${{ runner.temp }}/ccache-arm64":/ccache \
             -w /workspace \
             -e DJANGO_SETTINGS_MODULE="bomiot.server.server.settings" \
             -e RUN_MAIN="true" \
             -e PYTHONPATH="/workspace:/workspace/bomiot" \
             -e PYTHONIOENCODING="utf-8" \
+            -e CCACHE_DIR="/ccache" \
+            -e CCACHE_MAXSIZE="2G" \
             python:3.11-slim-bookworm \
             bash -c '
               set -eux
@@ -383,6 +395,7 @@ jobs:
                 liblcms2-dev libopenjp2-7-dev libtiff-dev \
                 libwebp-dev libxcb1-dev tk-dev \
                 libopenblas-dev gfortran libffi-dev
+              ccache -z || true
               python -m pip install --upgrade pip setuptools wheel
               # 创建 swap 空间防止链接阶段 OOM（QEMU 模拟 + 2574 文件链接非常吃内存）
               fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
@@ -399,8 +412,9 @@ jobs:
 
               python -m nuitka \
                 --standalone \
-                --jobs=2 \
+                --jobs=4 \
                 --lto=no \
+                --ccache \
                 --enable-plugin=tk-inter \
                 --include-data-files=setup.ini=setup.ini \
                 --include-data-files=splash.png=splash.png \
@@ -434,37 +448,29 @@ jobs:
                 --include-package=corsheaders \
                 --include-package=greaterwms \
                 --include-package=bomiot_test \
-                --include-package-data=bomiot \
-                --include-package-data=django \
-                --include-package-data=fastapi \
-                --include-package-data=flask \
-                --include-package-data=orjson \
-                --include-package-data=uvicorn \
-                --include-package-data=pandas \
-                --include-package-data=openpyxl \
-                --include-package-data=watchdog \
-                --include-package-data=tomlkit \
-                --include-package-data=psutil \
-                --include-package-data=xlsxwriter \
-                --include-package-data=requests \
-                --include-package-data=httptools \
-                --include-package-data=aiofiles \
-                --include-package-data=starlette \
-                --include-package-data=bomiot_asgi \
-                --include-package-data=bomiot_message \
-                --include-package-data=bomiot_token \
-                --include-package-data=django_filters \
-                --include-package-data=rest_framework \
-                --include-package-data=rest_framework_csv \
-                --include-package-data=django_apscheduler \
-                --include-package-data=corsheaders \
-                --include-package-data=greaterwms \
-                --include-package-data=bomiot_test \
                 --include-module=django.core.management \
                 --nofollow-import-to=pandas.tests \
+                --nofollow-import-to=django.test \
+                --nofollow-import-to=django.tests \
+                --nofollow-import-to=rest_framework.tests \
+                --nofollow-import-to=fastapi.tests \
+                --nofollow-import-to=flask.testsuite \
+                --nofollow-import-to=requests.tests \
+                --nofollow-import-to=starlette.tests \
+                --nofollow-import-to=uvicorn.tests \
+                --nofollow-import-to=openpyxl.tests \
+                --nofollow-import-to=httptools.tests \
                 --module-parameter=django-settings-module=bomiot.server.server.settings \
                 launcher.py
+              ccache -s || true
             '
+
+      - name: Save ccache (arm64)
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ${{ runner.temp }}/ccache-arm64
+          key: ccache-arm64-n413-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
 
       - name: Upload Artifact (Linux arm64)
         uses: actions/upload-artifact@v4
@@ -498,15 +504,27 @@ jobs:
         with:
           platforms: arm
 
+      # ccache 缓存：gcc 编译过的 .o 文件命中缓存直接跳过，二次构建快 2~5 倍
+      - name: Restore ccache (armv7)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache-armv7
+          key: ccache-armv7-n413-${{ hashFiles('requirements.txt') }}
+          restore-keys: ccache-armv7-n413-
+
       - name: Build launcher inside armv7 Docker (Nuitka standalone)
         run: |
+          mkdir -p "${{ runner.temp }}/ccache-armv7"
           docker run --rm --platform linux/arm/v7 \
             -v "${{ github.workspace }}":/workspace \
+            -v "${{ runner.temp }}/ccache-armv7":/ccache \
             -w /workspace \
             -e DJANGO_SETTINGS_MODULE="bomiot.server.server.settings" \
             -e RUN_MAIN="true" \
             -e PYTHONPATH="/workspace:/workspace/bomiot" \
             -e PYTHONIOENCODING="utf-8" \
+            -e CCACHE_DIR="/ccache" \
+            -e CCACHE_MAXSIZE="2G" \
             python:3.11-slim-bookworm \
             bash -c '
               set -eux
@@ -520,6 +538,7 @@ jobs:
                 liblcms2-dev libopenjp2-7-dev libtiff-dev \
                 libwebp-dev libxcb1-dev tk-dev \
                 libopenblas-dev gfortran libffi-dev
+              ccache -z || true
               python -m pip install --upgrade pip setuptools wheel
               # 创建 swap 空间防止链接阶段 OOM（QEMU 模拟 + 大量文件链接非常吃内存）
               fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
@@ -538,6 +557,7 @@ jobs:
                 --standalone \
                 --jobs=2 \
                 --lto=no \
+                --ccache \
                 --enable-plugin=tk-inter \
                 --include-data-files=setup.ini=setup.ini \
                 --include-data-files=splash.png=splash.png \
@@ -571,37 +591,29 @@ jobs:
                 --include-package=corsheaders \
                 --include-package=greaterwms \
                 --include-package=bomiot_test \
-                --include-package-data=bomiot \
-                --include-package-data=django \
-                --include-package-data=fastapi \
-                --include-package-data=flask \
-                --include-package-data=orjson \
-                --include-package-data=uvicorn \
-                --include-package-data=pandas \
-                --include-package-data=openpyxl \
-                --include-package-data=watchdog \
-                --include-package-data=tomlkit \
-                --include-package-data=psutil \
-                --include-package-data=xlsxwriter \
-                --include-package-data=requests \
-                --include-package-data=httptools \
-                --include-package-data=aiofiles \
-                --include-package-data=starlette \
-                --include-package-data=bomiot_asgi \
-                --include-package-data=bomiot_message \
-                --include-package-data=bomiot_token \
-                --include-package-data=django_filters \
-                --include-package-data=rest_framework \
-                --include-package-data=rest_framework_csv \
-                --include-package-data=django_apscheduler \
-                --include-package-data=corsheaders \
-                --include-package-data=greaterwms \
-                --include-package-data=bomiot_test \
                 --include-module=django.core.management \
                 --nofollow-import-to=pandas.tests \
+                --nofollow-import-to=django.test \
+                --nofollow-import-to=django.tests \
+                --nofollow-import-to=rest_framework.tests \
+                --nofollow-import-to=fastapi.tests \
+                --nofollow-import-to=flask.testsuite \
+                --nofollow-import-to=requests.tests \
+                --nofollow-import-to=starlette.tests \
+                --nofollow-import-to=uvicorn.tests \
+                --nofollow-import-to=openpyxl.tests \
+                --nofollow-import-to=httptools.tests \
                 --module-parameter=django-settings-module=bomiot.server.server.settings \
                 launcher.py
+              ccache -s || true
             '
+
+      - name: Save ccache (armv7)
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ${{ runner.temp }}/ccache-armv7
+          key: ccache-armv7-n413-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
 
       - name: Upload Artifact (Linux armv7)
         uses: actions/upload-artifact@v4
