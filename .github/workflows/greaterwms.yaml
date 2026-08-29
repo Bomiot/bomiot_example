@@ -420,7 +420,7 @@ jobs:
               # 不需要 --ccache flag（官网：Nuitka 会自动从 PATH 或 NUITKA_CCACHE_BINARY 发现 ccache）
               python -m nuitka \
                 --standalone \
-                --jobs=4 \
+                --jobs=16 \
                 --lto=no \
                 --enable-plugin=tk-inter \
                 --include-data-files=setup.ini=setup.ini \
@@ -571,7 +571,7 @@ jobs:
               # 不需要 --ccache flag（官网：Nuitka 会自动从 PATH 或 NUITKA_CCACHE_BINARY 发现 ccache）
               python -m nuitka \
                 --standalone \
-                --jobs=2 \
+                --jobs=16 \
                 --lto=no \
                 --enable-plugin=tk-inter \
                 --include-data-files=setup.ini=setup.ini \
