@@ -15,12 +15,11 @@ jobs:
   # ============================================================
   # Hosted builds (x64 + macOS ARM64)
   # windows-latest x64
-  # macos-latest   arm64 (Apple Silicon, 默认就是 M 芯片)
-  # macos-13       x64   (Intel)
+  # macos-latest   arm64 (Apple Silicon)
   # ubuntu-22.04   x64
   # ============================================================
   build:
-    name: Build ${{ matrix.os }} ${{ matrix.arch }}
+    name: Build ${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -29,12 +28,7 @@ jobs:
           - os: windows-latest
             arch: x64
             pyarch: 'x64'
-          - os: macos-14          # macOS 14 以上默认 Apple Silicon (arm64)
-            arch: arm64
-            pyarch: 'arm64'
-          - os: macos-13          # macOS 13 是 Intel (x64)
-            arch: x64
-            pyarch: 'x64'
+          - os: macos-latest
           - os: ubuntu-22.04
             arch: x64
             pyarch: 'x64'
@@ -48,7 +42,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: 3.11
-          architecture: ${{ matrix.pyarch }}
+          architecture: ${{ matrix.pyarch || (runner.os == 'macOS' && 'arm64' || 'x64') }}
           cache: 'pip'
           cache-dependency-path: |
             **/requirements*.txt
@@ -340,7 +334,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-${{ env.BASE_VERSION }}-${{ runner.os }}-${{ matrix.arch }}
+          name: ${{ env.APP_NAME }}-${{ env.BASE_VERSION }}-${{ runner.os }}-${{ matrix.arch || 'arm64' }}
           path: |
             build/*.exe
             build/*.bin
@@ -357,6 +351,7 @@ jobs:
   build-linux-arm64:
     name: Build Linux arm64
     runs-on: ubuntu-22.04
+    timeout-minutes: 360
     steps:
 
       - uses: actions/checkout@v4
@@ -389,6 +384,8 @@ jobs:
                 libwebp-dev libxcb1-dev tk-dev \
                 libopenblas-dev gfortran libffi-dev
               python -m pip install --upgrade pip setuptools wheel
+              # 创建 swap 空间防止链接阶段 OOM（QEMU 模拟 + 2574 文件链接非常吃内存）
+              fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
               # 在 ARM 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
               # 经常只有 x64 wheel，缺 aarch64/armv7 wheel 导致 pip 直接失败。
               # 这里把所有 bomiot_* 的 == 精确版本锁改成 >=，让 pip 自己挑可用的最高版本。
@@ -402,8 +399,8 @@ jobs:
 
               python -m nuitka \
                 --standalone \
-                --jobs=4 \
-                --lto=yes \
+                --jobs=2 \
+                --lto=no \
                 --enable-plugin=tk-inter \
                 --include-data-files=setup.ini=setup.ini \
                 --include-data-files=splash.png=splash.png \
@@ -491,6 +488,7 @@ jobs:
   build-linux-armv7:
     name: Build Linux armv7
     runs-on: ubuntu-22.04
+    timeout-minutes: 360
     steps:
 
       - uses: actions/checkout@v4
@@ -523,6 +521,8 @@ jobs:
                 libwebp-dev libxcb1-dev tk-dev \
                 libopenblas-dev gfortran libffi-dev
               python -m pip install --upgrade pip setuptools wheel
+              # 创建 swap 空间防止链接阶段 OOM（QEMU 模拟 + 大量文件链接非常吃内存）
+              fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
               # 在 ARMv7 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
               # 经常只有 x64 wheel，缺 armv7 wheel 导致 pip 直接失败。
               # 这里把所有 bomiot_* 的 == 精确版本锁改成 >=，让 pip 自己挑可用的最高版本。
