@@ -1,0 +1,5 @@
+scenario,new0,growth,churn,price,months,marketing_devices,marketing_months,pricing_model,buyout_price,renewal_rate
+Base,10,0.05,0.02,6.9,36,0,0,subscription,0,0
+Optimistic_Sub,15,0.10,0.01,6.9,36,50,36,subscription,0,0
+Optimistic_Buy,15,0.10,0.01,0,36,50,36,one_time,199,0.20
+Conservative,8,0.03,0.03,6.9,36,30,36,subscription,0,0

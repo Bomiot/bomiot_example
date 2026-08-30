@@ -16,6 +16,30 @@ app_name = "GreaterWMS"
 version = "3.0.0"
 port = 8008
 
+
+def _port_available(p: int) -> bool:
+    """Check if a TCP port is available for binding (no other process is listening on it)."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(('0.0.0.0', p))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def _find_available_port(start_port: int, max_tries: int = 100) -> int:
+    """Starting from start_port, return the first port that is not in use (increment by 1 each try)."""
+    for candidate in range(start_port, start_port + max_tries):
+        if _port_available(candidate):
+            if candidate != start_port:
+                print(f"Port {start_port} is in use, switched to port {candidate}")
+            return candidate
+    raise RuntimeError(f"No available port in range [{start_port}, {start_port + max_tries - 1}]")
+
+
 if __name__ == "__main__":
     # Welcome page
     splash = tk.Tk()
@@ -146,6 +170,8 @@ if __name__ == "__main__":
     print('System is starting up')
 
     # Start Django development server
+    # ---- port auto-increment: if 8008 is taken, try 8009, 8010, ... up to 100 ports ----
+    port = _find_available_port(port)
 
     print('System started successfully')
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -153,7 +179,7 @@ if __name__ == "__main__":
     ip = s.getsockname()[0]
     print('Local IP address:', ip)
     s.close()
-    baseurl = "http://" + ip + ":8008"
+    baseurl = "http://" + ip + ":" + str(port)
     print('Opening browser at:', baseurl)
 
 

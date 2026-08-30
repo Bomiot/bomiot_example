@@ -12,26 +12,11 @@ on:
 
 jobs:
 
-  # ============================================================
-  # Hosted builds (x64 + macOS ARM64)
-  # windows-latest x64
-  # macos-latest   arm64 (Apple Silicon)
-  # ubuntu-22.04   x64
-  # ============================================================
   build:
-    name: Build ${{ matrix.os }}${{ matrix.arch && format(' {0}', matrix.arch) || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            arch: x64
-            pyarch: 'x64'
-          - os: macos-latest
-          - os: ubuntu-22.04
-            arch: x64
-            pyarch: 'x64'
+        os: [windows-latest, macos-latest, ubuntu-22.04]
 
     steps:
 
@@ -41,8 +26,8 @@ jobs:
       # Setup Python
       - uses: actions/setup-python@v5
         with:
-          python-version: 3.11
-          architecture: ${{ matrix.pyarch || (runner.os == 'macOS' && 'arm64' || 'x64') }}
+          python-version: 3.11 # Version range or exact version of a Python version to use, using SemVer's version range syntax
+          architecture: 'x64' # optional x64 or x86. Defaults to x64 if not specified
           cache: 'pip'
           cache-dependency-path: |
             **/requirements*.txt
@@ -54,19 +39,19 @@ jobs:
           pip install -r requirements.txt
 
       - name: Generate discovered apps json (Linux/macOS)
-        if: runner.os != 'Windows'
+        if: matrix.os != 'windows-latest'
         run: python -c "import sys; p='${{ github.workspace }}'; sys.path.insert(0, p); from discovered_apps import main; main(p)"
 
       - name: Generate discovered apps json (Windows)
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           $p = '${{ github.workspace }}'.Replace('\', '/')
           python -c "import sys; sys.path.insert(0, '$p'); from discovered_apps import main; main('$p')"
 
-      # ---------- Windows x64 ----------
+      # Build python script into a single execute or app folder (windows)
       - uses: Nuitka/Nuitka-Action@main
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows-latest'
         with:
           jobs: 16
           nuitka-version: 4.1.3
@@ -78,8 +63,10 @@ jobs:
           product-version: ${{ env.BASE_VERSION }}
           copyright: Copyright (c) 2020 ${{ env.APP_NAME }}
           windows-icon-from-ico: logo.ico
+          windows-console-mode: disable
           lto: yes
           enable-plugins: tk-inter
+          # Included data files
           include-data-files: |
             setup.ini=setup.ini
             splash.png=splash.png
@@ -88,6 +75,7 @@ jobs:
             greaterwms/receiver.py=greaterwms/receiver.py
             greaterwms/files.py=greaterwms/files.py
             greaterwms/task.py=greaterwms/task.py
+          # Included packages
           include-package-data: |
             bomiot
             django
@@ -122,7 +110,6 @@ jobs:
             flask
             orjson
             uvicorn
-            requests
             pandas
             openpyxl
             watchdog
@@ -142,10 +129,12 @@ jobs:
             corsheaders
             greaterwms
             bomiot_test
+          # Included modules
           include-module: |
             django.core.management
           nofollow-import-to: |
             pandas.tests
+          # Special module parameter for Django
           module-parameter: django-settings-module=bomiot.server.server.settings
         env:
           DJANGO_SETTINGS_MODULE: "bomiot.server.server.settings"
@@ -153,11 +142,11 @@ jobs:
           PYTHONPATH: "${{ github.workspace }};${{ github.workspace }}/bomiot"
           PYTHONIOENCODING: "utf-8"
 
-      # ---------- macOS (x64 Intel + arm64 Apple Silicon 通用) ----------
+      # Build python script into a single execute or app folder (macos)
       - uses: Nuitka/Nuitka-Action@main
-        if: runner.os == 'macOS'
+        if: matrix.os == 'macos-latest'
         with:
-          jobs: 8
+          jobs: 16
           nuitka-version: 4.1.3
           script-name: launcher.py
           mode: standalone
@@ -172,6 +161,7 @@ jobs:
           macos-app-version: ${{ env.BASE_VERSION }}
           macos-app-console-mode: disable
           enable-plugins: tk-inter
+          # Included data files
           include-data-files: |
             setup.ini=setup.ini
             splash.png=splash.png
@@ -180,6 +170,7 @@ jobs:
             greaterwms/receiver.py=greaterwms/receiver.py
             greaterwms/files.py=greaterwms/files.py
             greaterwms/task.py=greaterwms/task.py
+          # Included packages
           include-package-data: |
             bomiot
             django
@@ -233,10 +224,12 @@ jobs:
             corsheaders
             greaterwms
             bomiot_test
+          # Included modules
           include-module: |
             django.core.management
           nofollow-import-to: |
             pandas.tests
+          # Special module parameter for Django
           module-parameter: django-settings-module=bomiot.server.server.settings
         env:
           DJANGO_SETTINGS_MODULE: "bomiot.server.server.settings"
@@ -244,9 +237,9 @@ jobs:
           PYTHONPATH: "${{ github.workspace }}:${{ github.workspace }}/bomiot"
           PYTHONIOENCODING: "utf-8"
 
-      # ---------- Linux x64 (Ubuntu) ----------
+      # Build python script into a single execute or app folder (Ubuntu)
       - uses: Nuitka/Nuitka-Action@main
-        if: runner.os == 'Linux' && matrix.arch == 'x64'
+        if: matrix.os == 'ubuntu-22.04'
         with:
           jobs: 16
           nuitka-version: 4.1.3
@@ -260,6 +253,7 @@ jobs:
           linux-icon: logo.png
           lto: yes
           enable-plugins: tk-inter
+          # Included data files
           include-data-files: |
             setup.ini=setup.ini
             splash.png=splash.png
@@ -267,6 +261,7 @@ jobs:
             greaterwms/server.py=greaterwms/server.py
             greaterwms/receiver.py=greaterwms/receiver.py
             greaterwms/files.py=greaterwms/files.py
+          # Included packages
           include-package-data: |
             bomiot
             django
@@ -319,10 +314,12 @@ jobs:
             corsheaders
             greaterwms
             bomiot_test
+          # Included modules
           include-module: |
             django.core.management
           nofollow-import-to: |
             pandas.tests
+          # Special module parameter for Django
           module-parameter: django-settings-module=bomiot.server.server.settings
         env:
           DJANGO_SETTINGS_MODULE: "bomiot.server.server.settings"
@@ -330,313 +327,14 @@ jobs:
           PYTHONPATH: "${{ github.workspace }}:${{ github.workspace }}/bomiot"
           PYTHONIOENCODING: "utf-8"
 
-      # Uploads artifact (区分操作系统 + 架构)
+      # Uploads artifact
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-${{ env.BASE_VERSION }}-${{ runner.os }}-${{ matrix.arch || 'arm64' }}
+          name: ${{ env.APP_NAME }}-${{ env.BASE_VERSION }}-${{ runner.os }}
           path: |
             build/*.exe
             build/*.bin
             build/*.app/**/*
-            build/*.dist/**/*
-          include-hidden-files: true
-
-
-  # ============================================================
-  # Linux ARM64 build
-  # 在 ubuntu-22.04 (x64) 上通过 QEMU 模拟 arm64，
-  # 使用 Docker python:3.11-slim-bookworm --platform linux/arm64 容器运行 Nuitka。
-  # ============================================================
-  build-linux-arm64:
-    name: Build Linux arm64
-    runs-on: ubuntu-22.04
-    timeout-minutes: 360
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - name: Set up QEMU for arm64 emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      # Nuitka 缓存（官网文档：NUITKA_CACHE_DIR / NUITKA_CACHE_DIR_CCACHE 控制 ccache 等各类缓存目录）
-      # actions/cache 在两次构建间保存恢复，二次构建命中 ccache 快 2~5 倍
-      - name: Restore Nuitka caches (arm64)
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ${{ runner.temp }}/nuitka-cache-arm64
-          key: nuitka-cache-arm64-n413-${{ hashFiles('requirements.txt') }}
-          restore-keys: nuitka-cache-arm64-n413-
-
-      - name: Build launcher inside arm64 Docker (Nuitka standalone)
-        run: |
-          mkdir -p "${{ runner.temp }}/nuitka-cache-arm64"
-          docker run --rm --platform linux/arm64 \
-            -v "${{ github.workspace }}":/workspace \
-            -v "${{ runner.temp }}/nuitka-cache-arm64":/nuitka-cache \
-            -w /workspace \
-            -e DJANGO_SETTINGS_MODULE="bomiot.server.server.settings" \
-            -e RUN_MAIN="true" \
-            -e PYTHONPATH="/workspace:/workspace/bomiot" \
-            -e PYTHONIOENCODING="utf-8" \
-            -e NUITKA_CACHE_DIR="/nuitka-cache" \
-            -e NUITKA_CACHE_DIR_CCACHE="/nuitka-cache/ccache" \
-            -e NUITKA_CCACHE_BINARY="/usr/bin/ccache" \
-            -e CCACHE_MAXSIZE="2G" \
-            -e CCACHE_BASEDIR="/workspace" \
-            python:3.11-slim-bookworm \
-            bash -c '
-              set -eux
-              apt-get update
-              # Pillow/numpy/pandas 源码编译/二进制依赖（jpeg/png/zlib/blas/openblas 等）
-              # + Nuitka/patchelf/编译器 + ccache（官网推荐：gcc 下启用可显著加速重复构建）
-              apt-get install -y --no-install-recommends \
-                build-essential gcc g++ python3-dev \
-                patchelf pkg-config ccache curl ca-certificates \
-                libjpeg-dev libpng-dev zlib1g-dev libfreetype6-dev \
-                liblcms2-dev libopenjp2-7-dev libtiff-dev \
-                libwebp-dev libxcb1-dev tk-dev \
-                libopenblas-dev gfortran libffi-dev
-              ccache -z || true
-              python -m pip install --upgrade pip setuptools wheel
-              # 创建 swap 空间防止链接阶段 OOM（QEMU 模拟 + 大量文件链接非常吃内存）
-              fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
-              # 在 ARM 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
-              # 经常只有 x64 wheel，缺 aarch64/armv7 wheel 导致 pip 直接失败。
-              # 这里把所有 bomiot_* 的 == 精确版本锁改成 >=，让 pip 自己挑可用的最高版本。
-              sed -i -E "s/^(bomiot_[a-z_]+)==.*/\1>=0.0.1/" requirements.txt
-              cat requirements.txt | grep bomiot_ || true
-              pip install pillow
-              pip install -r requirements.txt || { echo "[FATAL] pip install failed (probably missing aarch64 wheels for bomiot_* packages)"; exit 1; }
-              pip install nuitka==4.1.3 ordered-set zstandard
-              python -c "import sys; sys.path.insert(0, \"$(pwd)\"); from discovered_apps import main; main(\"$(pwd)\")"
-              ls -la apps.json || true
-
-              # 官网：python -m nuitka 是推荐用法（避免 accidentally 用错 python）
-              # ccache / 下载 / bytecode / dll 依赖的缓存都由 NUITKA_CACHE_DIR 统一管理
-              # 不需要 --ccache flag（官网：Nuitka 会自动从 PATH 或 NUITKA_CCACHE_BINARY 发现 ccache）
-              python -m nuitka \
-                --standalone \
-                --jobs=16 \
-                --lto=no \
-                --enable-plugin=tk-inter \
-                --include-data-files=setup.ini=setup.ini \
-                --include-data-files=splash.png=splash.png \
-                --include-data-files=/workspace/apps.json=apps.json \
-                --include-data-files=greaterwms/server.py=greaterwms/server.py \
-                --include-data-files=greaterwms/receiver.py=greaterwms/receiver.py \
-                --include-data-files=greaterwms/files.py=greaterwms/files.py \
-                --include-package=bomiot \
-                --include-package=django \
-                --include-package=fastapi \
-                --include-package=flask \
-                --include-package=orjson \
-                --include-package=uvicorn \
-                --include-package=pandas \
-                --include-package=openpyxl \
-                --include-package=watchdog \
-                --include-package=tomlkit \
-                --include-package=psutil \
-                --include-package=xlsxwriter \
-                --include-package=requests \
-                --include-package=httptools \
-                --include-package=aiofiles \
-                --include-package=starlette \
-                --include-package=bomiot_asgi \
-                --include-package=bomiot_message \
-                --include-package=bomiot_token \
-                --include-package=django_filters \
-                --include-package=rest_framework \
-                --include-package=rest_framework_csv \
-                --include-package=django_apscheduler \
-                --include-package=corsheaders \
-                --include-package=greaterwms \
-                --include-package=bomiot_test \
-                --include-module=django.core.management \
-                --nofollow-import-to=pandas.tests \
-                --nofollow-import-to=django.test \
-                --nofollow-import-to=django.tests \
-                --nofollow-import-to=rest_framework.tests \
-                --nofollow-import-to=fastapi.tests \
-                --nofollow-import-to=flask.testsuite \
-                --nofollow-import-to=requests.tests \
-                --nofollow-import-to=starlette.tests \
-                --nofollow-import-to=uvicorn.tests \
-                --nofollow-import-to=openpyxl.tests \
-                --nofollow-import-to=httptools.tests \
-                --module-parameter=django-settings-module=bomiot.server.server.settings \
-                launcher.py
-              ccache -s || true
-            '
-
-      - name: Save Nuitka caches (arm64)
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: ${{ runner.temp }}/nuitka-cache-arm64
-          key: nuitka-cache-arm64-n413-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
-
-      - name: Upload Artifact (Linux arm64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_NAME }}-${{ env.BASE_VERSION }}-Linux-arm64
-          path: |
-            launcher.bin
-            launcher.dist/**/*
-            build/*.bin
-            build/*.dist/**/*
-          include-hidden-files: true
-
-
-  # ============================================================
-  # Linux ARMv7 (armhf / 32-bit ARM) build
-  # 在 ubuntu-22.04 (x64) 上通过 QEMU 模拟 arm/v7，
-  # 使用 Docker python:3.11-slim-bookworm --platform linux/arm/v7 容器运行 Nuitka。
-  # 注意：ARMv7 模拟比 ARM64 更慢（3~10x），且依赖包（尤其 bomiot_* / orjson / pandas）
-  #       必须发布 manylinux2014_armv7l wheel 才能 pip install 成功。
-  # ============================================================
-  build-linux-armv7:
-    name: Build Linux armv7
-    runs-on: ubuntu-22.04
-    timeout-minutes: 360
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - name: Set up QEMU for armv7 emulation
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm
-
-      # Nuitka 缓存（官网文档：NUITKA_CACHE_DIR / NUITKA_CACHE_DIR_CCACHE 控制 ccache 等各类缓存目录）
-      # actions/cache 在两次构建间保存恢复，二次构建命中 ccache 快 2~5 倍
-      - name: Restore Nuitka caches (armv7)
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ${{ runner.temp }}/nuitka-cache-armv7
-          key: nuitka-cache-armv7-n413-${{ hashFiles('requirements.txt') }}
-          restore-keys: nuitka-cache-armv7-n413-
-
-      - name: Build launcher inside armv7 Docker (Nuitka standalone)
-        run: |
-          mkdir -p "${{ runner.temp }}/nuitka-cache-armv7"
-          docker run --rm --platform linux/arm/v7 \
-            -v "${{ github.workspace }}":/workspace \
-            -v "${{ runner.temp }}/nuitka-cache-armv7":/nuitka-cache \
-            -w /workspace \
-            -e DJANGO_SETTINGS_MODULE="bomiot.server.server.settings" \
-            -e RUN_MAIN="true" \
-            -e PYTHONPATH="/workspace:/workspace/bomiot" \
-            -e PYTHONIOENCODING="utf-8" \
-            -e NUITKA_CACHE_DIR="/nuitka-cache" \
-            -e NUITKA_CACHE_DIR_CCACHE="/nuitka-cache/ccache" \
-            -e NUITKA_CCACHE_BINARY="/usr/bin/ccache" \
-            -e CCACHE_MAXSIZE="2G" \
-            -e CCACHE_BASEDIR="/workspace" \
-            python:3.11-slim-bookworm \
-            bash -c '
-              set -eux
-              apt-get update
-              # ARMv7 下 Pillow/numpy/pandas 基本没有预构建 wheel，
-              # 必须先装上 -dev 包让它们能从源码成功编译。
-              # + ccache（官网推荐：gcc 下启用可显著加速重复构建）
-              apt-get install -y --no-install-recommends \
-                build-essential gcc g++ python3-dev \
-                patchelf pkg-config ccache curl ca-certificates \
-                libjpeg-dev libpng-dev zlib1g-dev libfreetype6-dev \
-                liblcms2-dev libopenjp2-7-dev libtiff-dev \
-                libwebp-dev libxcb1-dev tk-dev \
-                libopenblas-dev gfortran libffi-dev
-              ccache -z || true
-              python -m pip install --upgrade pip setuptools wheel
-              # 创建 swap 空间防止链接阶段 OOM（QEMU 模拟 + 大量文件链接非常吃内存）
-              fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile || true
-              # 在 ARMv7 架构下，bomiot_token/bomiot_asgi/bomiot_message 的最新精确版本
-              # 经常只有 x64 wheel，缺 armv7 wheel 导致 pip 直接失败。
-              # 这里把所有 bomiot_* 的 == 精确版本锁改成 >=，让 pip 自己挑可用的最高版本。
-              sed -i -E "s/^(bomiot_[a-z_]+)==.*/\1>=0.0.1/" requirements.txt
-              cat requirements.txt | grep bomiot_ || true
-              pip install pillow
-              pip install -r requirements.txt || { echo "[FATAL] pip install failed (probably missing armv7l wheels for bomiot_* packages)"; exit 1; }
-              pip install nuitka==4.1.3 ordered-set zstandard
-              python -c "import sys; sys.path.insert(0, \"$(pwd)\"); from discovered_apps import main; main(\"$(pwd)\")"
-              ls -la apps.json || true
-
-              # 官网：python -m nuitka 是推荐用法（避免 accidentally 用错 python）
-              # ccache / 下载 / bytecode / dll 依赖的缓存都由 NUITKA_CACHE_DIR 统一管理
-              # 不需要 --ccache flag（官网：Nuitka 会自动从 PATH 或 NUITKA_CCACHE_BINARY 发现 ccache）
-              python -m nuitka \
-                --standalone \
-                --jobs=16 \
-                --lto=no \
-                --enable-plugin=tk-inter \
-                --include-data-files=setup.ini=setup.ini \
-                --include-data-files=splash.png=splash.png \
-                --include-data-files=/workspace/apps.json=apps.json \
-                --include-data-files=greaterwms/server.py=greaterwms/server.py \
-                --include-data-files=greaterwms/receiver.py=greaterwms/receiver.py \
-                --include-data-files=greaterwms/files.py=greaterwms/files.py \
-                --include-package=bomiot \
-                --include-package=django \
-                --include-package=fastapi \
-                --include-package=flask \
-                --include-package=orjson \
-                --include-package=uvicorn \
-                --include-package=pandas \
-                --include-package=openpyxl \
-                --include-package=watchdog \
-                --include-package=tomlkit \
-                --include-package=psutil \
-                --include-package=xlsxwriter \
-                --include-package=requests \
-                --include-package=httptools \
-                --include-package=aiofiles \
-                --include-package=starlette \
-                --include-package=bomiot_asgi \
-                --include-package=bomiot_message \
-                --include-package=bomiot_token \
-                --include-package=django_filters \
-                --include-package=rest_framework \
-                --include-package=rest_framework_csv \
-                --include-package=django_apscheduler \
-                --include-package=corsheaders \
-                --include-package=greaterwms \
-                --include-package=bomiot_test \
-                --include-module=django.core.management \
-                --nofollow-import-to=pandas.tests \
-                --nofollow-import-to=django.test \
-                --nofollow-import-to=django.tests \
-                --nofollow-import-to=rest_framework.tests \
-                --nofollow-import-to=fastapi.tests \
-                --nofollow-import-to=flask.testsuite \
-                --nofollow-import-to=requests.tests \
-                --nofollow-import-to=starlette.tests \
-                --nofollow-import-to=uvicorn.tests \
-                --nofollow-import-to=openpyxl.tests \
-                --nofollow-import-to=httptools.tests \
-                --module-parameter=django-settings-module=bomiot.server.server.settings \
-                launcher.py
-              ccache -s || true
-            '
-
-      - name: Save Nuitka caches (armv7)
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: ${{ runner.temp }}/nuitka-cache-armv7
-          key: nuitka-cache-armv7-n413-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
-
-      - name: Upload Artifact (Linux armv7)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.APP_NAME }}-${{ env.BASE_VERSION }}-Linux-armv7
-          path: |
-            launcher.bin
-            launcher.dist/**/*
-            build/*.bin
             build/*.dist/**/*
           include-hidden-files: true

@@ -1,1 +1,9 @@
-KEY = "G_PD9SIX_fOOi7aIIQicwEQ_jwBlqn2QfW4t_XzhZOEdFPf0pIES0XeQpmuL38lAgaLfgwilx6YEuuzMNfT0rwLq5xxHg3b2ORH60A37OAamKJKLRPDYwa4WE4IPrlGUox_6XhAm8pcj3b35ZPCqM8X2YlS2XhwVRLrQ4glMAbgpnm8zS3vRVZibRG_0y2qq9SO6S1RxNZX_EINnw4pCrih4LTe_8LE0kQiXhmqWWbO16lJu_ns="
+from bomiot_token import encrypt_info, verify_info
+
+print(encrypt_info())
+
+
+COMMUNITY_KEY = "MDA6RTA6NEU6MTA61fJBMUIaiKXj6w3JctaeAroqCKStJYJO21-Mcx4MyJw5lQABNnjUH2mBlA=="
+SPONSOR_KEY = "MDA6RTA6NEU6MTA61fJBMUIaiKXj6w3JctaeAroqGLuvJoRPwODFiW18OLrz9DeKBYKoNTY="
+
+print(verify_info(COMMUNITY_KEY))
