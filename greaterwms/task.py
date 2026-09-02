@@ -1,8 +1,12 @@
 ﻿import os
+import requests
 
 def example_job(**kwargs):
     """Scheduled example job"""
     from datetime import datetime
-    print(os.environ.get('AUTHED', '1111'))
+    print(os.environ.get('AUTHED', 'false'))
+    print(os.environ.get('IS_LAN', 'false'))
+    x = requests.post("https://openapi.alipay.com/gateway.do", timeout=4)
+    print(x)
     print(f"This is a scheduled task test ----------- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     # Your business logic here

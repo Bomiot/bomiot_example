@@ -6,7 +6,7 @@ APScheduler==3.11.3
 asgiref==3.12.1
 blinker==1.9.0
 bomiot==1.2.5
-bomiot_asgi==0.6.4
+bomiot_asgi==0.6.20
 bomiot_message==0.4.6
 bomiot_token==0.7.16
 certifi==2026.7.22
