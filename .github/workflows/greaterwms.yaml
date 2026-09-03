@@ -63,7 +63,7 @@ jobs:
           product-version: ${{ env.BASE_VERSION }}
           copyright: Copyright (c) 2020 ${{ env.APP_NAME }}
           windows-icon-from-ico: logo.ico
-          # windows-console-mode: disable
+          windows-console-mode: disable
           lto: yes
           enable-plugins: tk-inter
           # Included data files
@@ -326,6 +326,103 @@ jobs:
           RUN_MAIN: "true"
           PYTHONPATH: "${{ github.workspace }}:${{ github.workspace }}/bomiot"
           PYTHONIOENCODING: "utf-8"
+
+      # Copy .gitignore into build output (launcher reads it at update time)
+      - name: Copy .gitignore into build output
+        shell: bash
+        run: |
+          if [ -d build/launcher.dist ]; then
+            cp .gitignore build/launcher.dist/.gitignore
+          fi
+
+      # Generate manifest.json after Nuitka build completes
+      # Scans the compiled binary files, computes SHA256, excludes files matching .gitignore
+      - name: Generate manifest.json
+        shell: python
+        run: |
+          import hashlib, json, os, fnmatch, sys
+
+          # Find build output directory
+          dist = "build/launcher.dist"
+          if not os.path.isdir(dist):
+              # macOS .app bundle
+              for d in os.listdir("build"):
+                  if d.endswith(".app"):
+                      dist = os.path.join("build", d)
+                      break
+
+          if not os.path.isdir(dist):
+              print(f"ERROR: build output directory not found")
+              sys.exit(1)
+
+          # Read .gitignore patterns
+          ignore_patterns = []
+          gitignore = os.path.join(dist, ".gitignore")
+          if os.path.exists(gitignore):
+              with open(gitignore) as f:
+                  for line in f:
+                      line = line.strip()
+                      if line and not line.startswith("#"):
+                          ignore_patterns.append(line)
+
+          # Also read root .gitignore
+          root_gitignore = ".gitignore"
+          if os.path.exists(root_gitignore):
+              with open(root_gitignore) as f:
+                  for line in f:
+                      line = line.strip()
+                      if line and not line.startswith("#"):
+                          ignore_patterns.append(line)
+
+          def is_ignored(rel_path):
+              """Check if a file path matches any .gitignore pattern."""
+              basename = os.path.basename(rel_path)
+              for pattern in ignore_patterns:
+                  # Match full path or basename
+                  if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(basename, pattern):
+                      return True
+                  # Match directory patterns (e.g. "logs/")
+                  if pattern.endswith("/"):
+                      dir_name = pattern.rstrip("/")
+                      if rel_path.startswith(dir_name + "/") or ("/" + dir_name + "/") in rel_path:
+                          return True
+              return False
+
+          # Scan all files in build output
+          files = {}
+          for root, dirs, filenames in os.walk(dist):
+              for fn in filenames:
+                  if fn == "manifest.json":
+                      continue
+                  full = os.path.join(root, fn)
+                  rel = os.path.relpath(full, dist).replace(os.sep, "/")
+
+                  # Skip files matching .gitignore
+                  if is_ignored(rel):
+                      continue
+
+                  with open(full, "rb") as f:
+                      files[rel] = hashlib.sha256(f.read()).hexdigest()
+
+          manifest = {
+              "app_name": os.environ.get("APP_NAME", "GreaterWMS"),
+              "version": os.environ.get("BASE_VERSION", "3.0.0"),
+              "os": os.environ.get("RUNNER_OS", "Unknown"),
+              "arch": "x64",
+              "files": files
+          }
+
+          out_path = os.path.join(dist, "manifest.json")
+          with open(out_path, "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+          print(f"Generated manifest.json: {len(files)} files, {os.path.getsize(out_path)} bytes")
+          # Show first 20 entries for verification
+          for i, (path, h) in enumerate(sorted(files.items())):
+              if i >= 20:
+                  print(f"  ... and {len(files) - 20} more")
+                  break
+              print(f"  {path}: {h[:16]}...")
 
       # Uploads artifact
       - name: Upload Artifact
