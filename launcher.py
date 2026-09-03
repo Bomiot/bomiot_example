@@ -235,8 +235,45 @@ def _can_reach_server(update_url, timeout=2.0):
         return True  # 预检自身异常时不拦截，交由上层 HTTP 请求兜底
 
 
-def _generate_update_script(app_dir, temp_dir, to_delete):
-    """生成跨平台更新脚本"""
+def _url_head_ok(url, timeout=5.0, max_retries=2):
+    """
+    轻量 HTTP HEAD 探测，用于在批量下载前验证「远端版本目录是否真实存在」。
+    —— 避免服务器只更新了 manifest 但忘了同步 GreaterWMS-{version}-{Platform}/ 文件夹时，
+       触发 _download 对 404 文件 3×60s 重试，splash 卡死近 3 分钟。
+    返回 (ok: bool, reason: str)。
+    """
+    last_reason = ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = urllib.request.Request(
+                url, method="HEAD", headers={"User-Agent": "GreaterWMS-Updater"}
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = getattr(resp, "status", 200)
+                if 200 <= status < 300:
+                    return True, f"HTTP {status}"
+                last_reason = f"HTTP {status}"
+        except urllib.error.HTTPError as e:
+            last_reason = f"HTTP {e.code}"
+            if e.code == 404:
+                return False, last_reason  # 404 无需重试，立即判定"文件夹不存在"
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_reason = f"{type(e).__name__}"
+        except Exception as e:
+            last_reason = f"{type(e).__name__}: {str(e)[:40]}"
+        if attempt < max_retries:
+            sleep(1)
+    return False, last_reason
+
+
+def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None):
+    """
+    生成跨平台更新脚本。
+
+    manifest_name: 可选，若提供则在 xcopy/cp 之后再显式覆盖一次本地 manifest，
+                   确保「服务器 manifest 一定覆盖本地 manifest」，
+                   不依赖 xcopy/cp -rf 的递归行为（双保险）。
+    """
     is_win = sys.platform == "win32"
     exe_name = os.path.basename(sys.executable)
     exe_path = sys.executable
@@ -248,6 +285,9 @@ def _generate_update_script(app_dir, temp_dir, to_delete):
         lines.append(f'tasklist /fi "imagename eq {exe_name}" 2>nul | find /i "{exe_name}" >nul')
         lines.append(f'if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto wait )')
         lines.append(f'xcopy /Y /S /E /I "{temp_dir}" "{app_dir}" >nul 2>nul')
+        # 显式双保险：服务器 manifest 覆盖本地 manifest
+        if manifest_name:
+            lines.append(f'copy /Y "{os.path.join(temp_dir, manifest_name)}" "{os.path.join(app_dir, manifest_name)}" >nul 2>nul')
         lines.append(f'rd /S /Q "{temp_dir}" 2>nul')
         for f in to_delete:
             lines.append(f'del /F /Q "{os.path.join(app_dir, f)}" 2>nul')
@@ -260,6 +300,9 @@ def _generate_update_script(app_dir, temp_dir, to_delete):
         lines = ["#!/bin/bash"]
         lines.append(f'while pgrep -f "{exe_path}" > /dev/null 2>&1; do sleep 1; done')
         lines.append(f'cp -rf "{temp_dir}"/* "{app_dir}"/')
+        # 显式双保险：服务器 manifest 覆盖本地 manifest
+        if manifest_name:
+            lines.append(f'cp -f "{os.path.join(temp_dir, manifest_name)}" "{os.path.join(app_dir, manifest_name)}" 2>/dev/null')
         lines.append(f'rm -rf "{temp_dir}"')
         for f in to_delete:
             lines.append(f'rm -f "{os.path.join(app_dir, f)}"')
@@ -359,23 +402,37 @@ def check_update(status_label=None):
             status_label.update()
         return False
 
-    # 三维度判断
+    # 版本号快速相等跳过（服务器 manifest 为最终真源，不做 >/< 方向判断，支持版本回滚）
+    # —— 仅当"远端版本号 == 编译进 exe 的硬编码版本号"时，视为无变化，直接跳过，
+    #    避免 1-10s 的本地 SHA256 全量扫描（日常 95% 场景命中）。
+    #    其余任何情况（远端更高 = 升级 / 远端更低 = 回滚 / 版本一致但文件怀疑损坏）
+    #    一律进入 hash 比对，以远端 manifest.files 为基准对齐。
     if remote_manifest.get("app_name") != app_name:
         return False
-    if remote_manifest.get("version", "0") <= local_manifest.get("version", "0"):
+    _remote_ver = remote_manifest.get("version", "0")
+    if _remote_ver == version:
+        print(f"[Update] Version matches (binary {version} == remote {_remote_ver}), skipping hash scan")
         if status_label:
             status_label.config(text="已是最新版本")
             status_label.update()
         return False
 
-    remote_version = remote_manifest["version"]
+    remote_version = _remote_ver
     remote_files = remote_manifest.get("files", {})
     # 文件下载 base: {UPDATE_URL}GreaterWMS-{version}-{Platform}/
+    # 注：回滚场景（远端版本 < binary 版本）下拼接出的是旧版本目录，服务器需保留对应版本文件夹
     file_base_url = f"{UPDATE_URL}{app_name}-{remote_version}-{_display}/"
 
+    _local_ver = local_manifest.get("version", "?")
+    if _remote_ver < version:
+        _direction = "rollback"
+    else:
+        _direction = "upgrade"
     if status_label:
-        status_label.config(text=f"发现新版本 {remote_version}，正在更新...")
+        status_label.config(text=f"发现新版本 {remote_version}（{_direction}），正在更新...")
         status_label.update()
+
+    print(f"[Update] {_direction} needed: binary={version} local_manifest={_local_ver} remote={remote_version}")
 
     # 扫描本地文件
     local_files = _scan_local_files(app_dir, ignore_patterns)
@@ -405,6 +462,27 @@ def check_update(status_label=None):
 
     # 下载变化的文件到临时目录
     temp_dir = tempfile.mkdtemp(prefix="bomiot_update_")
+
+    # ========= 前置探测：远端版本目录是否真实存在 =========
+    # 防止服务器只更新了 manifest.json 但忘了同步 GreaterWMS-{version}-{Platform}/ 文件夹，
+    # 否则会在首个 404 文件上触发 3×60s 下载重试卡死 splash。
+    # 只有 to_download 非空时才需要探测；纯删除场景（只有 to_delete）不需要下载，跳过探测。
+    if to_download:
+        _probe_url = file_base_url + to_download[0]
+        _ok, _reason = _url_head_ok(_probe_url, timeout=5.0, max_retries=2)
+        if not _ok:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            if _reason == "HTTP 404":
+                err_msg = f"服务器版本目录不存在（{remote_version}），跳过更新"
+            else:
+                err_msg = f"更新文件探测失败（{_reason}），跳过更新"
+            print(f"[Update] {err_msg} probe={_probe_url}")
+            if status_label:
+                status_label.config(text=err_msg)
+                status_label.update()
+            return False
+        print(f"[Update] Remote version folder verified via HEAD: {to_download[0]} ({_reason})")
+
     for path in to_download:
         url = file_base_url + path
         dest = os.path.join(temp_dir, path.replace("/", os.sep))
@@ -423,8 +501,19 @@ def check_update(status_label=None):
         status_label.config(text="更新下载完成，正在应用...")
         status_label.update()
 
-    # 生成更新脚本
-    script_path = _generate_update_script(app_dir, temp_dir, to_delete)
+    # 将新版本的 manifest 也写入 temp_dir，随 xcopy/cp 一起覆盖到 app_dir。
+    # —— 因为 CI 生成 manifest 时是「先扫目录再写 manifest」，所以远端 files 不包含 manifest 自身。
+    #    如果不在此显式写出，重启后本地 manifest 仍是旧版本号，会白跑一次检查周期。
+    new_manifest_path = os.path.join(temp_dir, manifest_name)
+    try:
+        with open(new_manifest_path, "w", encoding="utf-8") as f:
+            json.dump(remote_manifest, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        # 写 manifest 失败不阻止更新（否则更新失败但旧二进制还在），仅打日志
+        print(f"[Update] Warning: failed to write new manifest to temp: {e}")
+
+    # 生成更新脚本（传 manifest_name 进去，生成显式 copy 行，保证服务器 manifest 覆盖本地）
+    script_path = _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=manifest_name)
 
     # 启动脚本
     is_win = sys.platform == "win32"
