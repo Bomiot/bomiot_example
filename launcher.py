@@ -21,7 +21,10 @@ port = 8008
 # === 增量更新配置（可修改为你的实际地址）===
 # 远端 releases 目录的 base URL，launcher 会自动拼接 manifest 和版本文件路径
 # 结构: {UPDATE_URL}manifest-{os}-{arch}.json  和  {UPDATE_URL}GreaterWMS-{version}-{Platform}/
-UPDATE_URL = "https://bomiot.com/releases/"
+UPDATE_URL = "http://127.0.0.1:8000/media/update/"
+# 归一化：确保 UPDATE_URL 以 "/" 结尾（为空时保持空），避免拼接时少 "/" 导致 404
+if UPDATE_URL:
+    UPDATE_URL = UPDATE_URL.rstrip("/") + "/"
 
 
 def _detect_platform():

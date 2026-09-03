@@ -74,13 +74,22 @@ jobs:
           $p = '${{ github.workspace }}'.Replace('\', '/')
           python -c "import sys; sys.path.insert(0, '$p'); from discovered_apps import main; main('$p')"
 
+      # Rename entry script → APP_NAME-VERSION-OS.py
+      #   Nuitka basename rule: {folder}.py  →  {folder}.dist/{folder}.exe  (windows)
+      #                                      →  {folder}.dist/{folder}      (linux)
+      #   Follow-up step strips the ".dist" suffix, leaving exactly the version-named folder.
+      - name: Rename launcher.py → ${{ steps.platform.outputs.folder }}.py (windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: cp launcher.py "${{ steps.platform.outputs.folder }}.py"
+
       # Build python script into a single execute or app folder (windows)
       - uses: Nuitka/Nuitka-Action@main
         if: matrix.os == 'windows-latest'
         with:
           jobs: 16
           nuitka-version: 4.1.3
-          script-name: launcher.py
+          script-name: ${{ steps.platform.outputs.folder }}.py
           mode: standalone
           company-name: ${{ env.APP_NAME }}
           product-name: ${{ env.APP_NAME }}
@@ -168,13 +177,30 @@ jobs:
           PYTHONPATH: "${{ github.workspace }};${{ github.workspace }}/bomiot"
           PYTHONIOENCODING: "utf-8"
 
+      # Strip ".dist" suffix so the build folder is exactly APP_NAME-VERSION-OS (no extra extension)
+      - name: Rename {folder}.dist → {folder} (windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $SRC = "build/${{ steps.platform.outputs.folder }}.dist"
+          $DST = "build/${{ steps.platform.outputs.folder }}"
+          if (Test-Path $DST) { Remove-Item -Recurse -Force $DST }
+          Rename-Item -Path $SRC -NewName "${{ steps.platform.outputs.folder }}" -Force
+          Write-Host "Renamed: $SRC -> $DST"
+
+      # Rename entry script → APP_NAME-VERSION-OS.py (macos)
+      - name: Rename launcher.py → ${{ steps.platform.outputs.folder }}.py (macos)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: cp launcher.py "${{ steps.platform.outputs.folder }}.py"
+
       # Build python script into a single execute or app folder (macos)
       - uses: Nuitka/Nuitka-Action@main
         if: matrix.os == 'macos-latest'
         with:
           jobs: 16
           nuitka-version: 4.1.3
-          script-name: launcher.py
+          script-name: ${{ steps.platform.outputs.folder }}.py
           mode: standalone
           company-name: ${{ env.APP_NAME }}
           product-name: ${{ env.APP_NAME }}
@@ -264,13 +290,34 @@ jobs:
           PYTHONPATH: "${{ github.workspace }}:${{ github.workspace }}/bomiot"
           PYTHONIOENCODING: "utf-8"
 
+      # Strip ".dist" suffix for macOS if present (macOS standalone also produces a .app bundle which is used for manifest)
+      - name: Rename {folder}.dist → {folder} (macos, if applicable)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          SRC="build/${{ steps.platform.outputs.folder }}.dist"
+          DST="build/${{ steps.platform.outputs.folder }}"
+          if [ -d "$SRC" ]; then
+            if [ -d "$DST" ]; then rm -rf "$DST"; fi
+            mv "$SRC" "$DST"
+            echo "Renamed: $SRC -> $DST"
+          else
+            echo "Skipped: $SRC does not exist (standalone mode with macos-app-name uses .app bundle instead; .dist may not be created)"
+          fi
+
+      # Rename entry script → APP_NAME-VERSION-OS.py (ubuntu)
+      - name: Rename launcher.py → ${{ steps.platform.outputs.folder }}.py (ubuntu)
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: cp launcher.py "${{ steps.platform.outputs.folder }}.py"
+
       # Build python script into a single execute or app folder (Ubuntu)
       - uses: Nuitka/Nuitka-Action@main
         if: matrix.os == 'ubuntu-22.04'
         with:
           jobs: 16
           nuitka-version: 4.1.3
-          script-name: launcher.py
+          script-name: ${{ steps.platform.outputs.folder }}.py
           mode: standalone
           company-name: ${{ env.APP_NAME }}
           product-name: ${{ env.APP_NAME }}
@@ -355,6 +402,17 @@ jobs:
           PYTHONPATH: "${{ github.workspace }}:${{ github.workspace }}/bomiot"
           PYTHONIOENCODING: "utf-8"
 
+      # Strip ".dist" suffix: build/GreaterWMS-3.0.0-Linux.dist → build/GreaterWMS-3.0.0-Linux
+      - name: Rename {folder}.dist → {folder} (ubuntu)
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          SRC="build/${{ steps.platform.outputs.folder }}.dist"
+          DST="build/${{ steps.platform.outputs.folder }}"
+          if [ -d "$DST" ]; then rm -rf "$DST"; fi
+          mv "$SRC" "$DST"
+          echo "Renamed: $SRC -> $DST"
+
       # Generate manifest.json after Nuitka build completes
       # Scans the compiled binary files, computes SHA256, excludes files matching .gitignore
       - name: Generate manifest.json
@@ -362,18 +420,32 @@ jobs:
         run: |
           import hashlib, json, os, fnmatch, sys
 
+          # ------------------------------------------------------------------
           # Find build output directory
-          dist = "build/launcher.dist"
+          #   - Windows / Linux : previous step renamed {folder}.dist → build/{folder}
+          #                        directly (e.g. build/GreaterWMS-3.0.0-Windows)
+          #   - macOS           : may be a .app bundle (GreaterWMS.app) produced by
+          #                        macos-app-name, or also build/{folder} if
+          #                        rename-dist step succeeded on the .dist output
+          # ------------------------------------------------------------------
+          folder_name = "${{ steps.platform.outputs.folder }}"
+          dist = os.path.join("build", folder_name)
           if not os.path.isdir(dist):
-              # macOS .app bundle
-              for d in os.listdir("build"):
-                  if d.endswith(".app"):
-                      dist = os.path.join("build", d)
-                      break
+              # Fallback 1: macOS .app bundle
+              import glob
+              apps = sorted(glob.glob(os.path.join("build", "*.app")))
+              if apps:
+                  dist = apps[0]
+              else:
+                  # Fallback 2: legacy {folder}.dist (rename-dist step was skipped)
+                  legacy = os.path.join("build", f"{folder_name}.dist")
+                  if os.path.isdir(legacy):
+                      dist = legacy
 
           if not os.path.isdir(dist):
               print(f"ERROR: build output directory not found")
               sys.exit(1)
+          print(f"Using build output directory: {dist}")
 
           # Read .gitignore patterns
           ignore_patterns = []
@@ -438,23 +510,28 @@ jobs:
           build_dir = "build"
           import shutil
 
-          # 1) launcher.dist/manifest-{os}-{arch}.json —— 客户端启动时从自己目录读取
+          # 1) Dist folder 内 manifest —— 客户端启动时从自己所在目录（GreaterWMS-3.0.0-Windows/）读取
           in_dist_manifest = os.path.join(dist, manifest_name)
           with open(in_dist_manifest, "w", encoding="utf-8") as f:
               json.dump(manifest, f, indent=2, ensure_ascii=False)
           print(f"Generated {in_dist_manifest}: {len(files)} files, {os.path.getsize(in_dist_manifest)} bytes")
 
-          # 2) build/manifest-{os}-{arch}.json —— 服务器 releases/ 根目录用（和上面是同一个内容，避免重名冲突时用 build 下的）
+          # 2) build/manifest-{os}-{arch}.json —— 服务器 releases/ 根目录用
           server_manifest = os.path.join(build_dir, manifest_name)
           shutil.copyfile(in_dist_manifest, server_manifest)
 
-          # 3) build/GreaterWMS-{version}-{Platform}/ —— 解压后直接拷到服务器 releases/
-          folder_name = "${{ steps.platform.outputs.folder }}"
+          # 3) 确保 build/{APP_NAME}-{VERSION}-{Platform}/ 完整存在：
+          #    - Windows / Linux : dist 已经就是 folder_dir，无需 copy（rename-dist step 处理过）
+          #    - macOS           : dist 是 .app bundle（路径不同），需要 copytree 到版本目录
           folder_dir = os.path.join(build_dir, folder_name)
-          if os.path.exists(folder_dir):
-              shutil.rmtree(folder_dir)
-          shutil.copytree(dist, folder_dir)
-          print(f"Prepared release folder: {folder_dir}")
+          if os.path.abspath(dist) != os.path.abspath(folder_dir):
+              if os.path.exists(folder_dir):
+                  shutil.rmtree(folder_dir)
+              shutil.copytree(dist, folder_dir)
+              print(f"Copied dist ({dist}) → release folder ({folder_dir})")
+          else:
+              print(f"Dist already equals release folder: {folder_dir} (copy skipped)")
+          print(f"Release folder ready: {folder_dir}")
 
           # Show first 20 entries for verification
           for i, (path, h) in enumerate(sorted(files.items())):
