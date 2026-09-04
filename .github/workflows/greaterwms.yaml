@@ -2,7 +2,7 @@ name: Bomiot Build
 
 env:
   APP_NAME: "GreaterWMS"  # Application name (globally shared)
-  BASE_VERSION: "3.0.1"  # Base version number (globally shared)
+  # BASE_VERSION 不再硬编码，由 CI 从 launcher.py 自动读取（见下方 step）
 
 
 on:
@@ -22,6 +22,14 @@ jobs:
 
       # Check-out repository
       - uses: actions/checkout@v4
+
+      # 从 launcher.py 提取 version，作为全局 BASE_VERSION（唯一版本号来源）
+      - name: Read version from launcher.py
+        shell: bash
+        run: |
+          VERSION=$(grep -oP 'version = "\K[^"]+' launcher.py)
+          echo "BASE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Detected version: $VERSION"
 
       # Setup Python
       - uses: actions/setup-python@v5
