@@ -1,9 +1,7 @@
 name: Bomiot Build
 
-env:
-  # APP_NAME / BASE_VERSION 不再硬编码，由 CI 从 launcher.py 自动读取（见下方 step）
-  # launcher.py 是 app_name 与 version 的唯一来源，改一处即可。
-
+# APP_NAME / BASE_VERSION 不在此硬编码，由下方 step 从 launcher.py 自动读取
+# （launcher.py 是 app_name 与 version 的唯一来源，改一处即可）
 
 on:
   push:
