@@ -617,9 +617,11 @@ def check_update(status_label=None):
     try:
         if is_win:
             CREATE_NO_WINDOW          = int(getattr(subprocess, "CREATE_NO_WINDOW",          0x08000000))
-            DETACHED_PROCESS          = int(getattr(subprocess, "DETACHED_PROCESS",          0x00000008))
             CREATE_NEW_PROCESS_GROUP  = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP",  0x00000200))
-            flags = CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            # 注意：不要加 DETACHED_PROCESS。它会导致子进程（cmd/xcopy）在
+            # 无控制台句柄环境下 xcopy 返回 err=4 "系统找不到指定的路径"，
+            # 使更新文件无法被复制。CREATE_NO_WINDOW 已足够隐藏窗口。
+            flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
             startupinfo = subprocess.STARTUPINFO()
             # STARTF_USESHOWWINDOW = 1，SW_HIDE = 0
             try:
