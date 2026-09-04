@@ -27,7 +27,7 @@ jobs:
       - name: Read version from launcher.py
         shell: bash
         run: |
-          VERSION=$(grep -oP 'version = "\K[^"]+' launcher.py)
+          VERSION=$(grep 'version = ' launcher.py | head -1 | sed 's/.*version = "//;s/".*//')
           echo "BASE_VERSION=$VERSION" >> $GITHUB_ENV
           echo "Detected version: $VERSION"
 
