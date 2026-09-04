@@ -15,7 +15,7 @@ from PIL import Image, ImageTk
 import requests
 
 app_name = "GreaterWMS"
-version = "3.0.1"
+version = "3.0.0"
 port = 8008
 
 # === 增量更新配置（可修改为你的实际地址）===
@@ -293,9 +293,11 @@ def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None,
         script_path = os.path.join(app_dir, "update.bat")
         lines = ["@echo off"]
         lines.append(f':wait')
-        lines.append(f'tasklist /fi "imagename eq {exe_name}" 2>nul | find /i "{exe_name}" >nul')
-        # 不用 timeout.exe（可能开子进程），用 ping 本机做 1s 静默等待
-        lines.append(f'if not errorlevel 1 ( ping -n 2 127.0.0.1 >nul 2>nul & goto wait )')
+        # 用临时文件中转，避免 tasklist|find 管道死锁（CREATE_NO_WINDOW 下 find stdin 卡 EOF）
+        lines.append(f'tasklist /fi "imagename eq {exe_name}" >"%TEMP%\\_bomiot_wait.tmp" 2>nul')
+        lines.append(f'find /i "{exe_name}" "%TEMP%\\_bomiot_wait.tmp" >nul 2>nul')
+        lines.append(f'if not errorlevel 1 ( del "%TEMP%\\_bomiot_wait.tmp" >nul 2>nul & ping -n 2 127.0.0.1 >nul 2>nul & goto wait )')
+        lines.append(f'del "%TEMP%\\_bomiot_wait.tmp" >nul 2>nul')
         lines.append(f'xcopy /Y /S /E /I "{temp_dir}" "{app_dir}" >nul 2>nul')
         # 显式双保险：服务器 manifest 覆盖本地 manifest
         if manifest_name:
