@@ -115,6 +115,7 @@ def _scan_local_files(app_dir, ignore_patterns):
     跳过：.gitignore 匹配的 / manifest.json / manifest-*.json / update.bat / update.sh
     —— manifest-*.json 必须排除，否则远端 files 里不含它时会被加入 to_delete，
        更新后本地 manifest 被删，下次启动永久跳过更新检查（问题②）。
+    注：当前 check_update 比对逻辑改为「只以 manifest.files 为准」，该函数已不被主流程调用，保留作为调试工具。
     """
     result = {}
     for root, dirs, files in os.walk(app_dir):
@@ -286,7 +287,8 @@ def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None):
         lines = ["@echo off"]
         lines.append(f':wait')
         lines.append(f'tasklist /fi "imagename eq {exe_name}" 2>nul | find /i "{exe_name}" >nul')
-        lines.append(f'if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto wait )')
+        # 不用 timeout.exe（可能开子进程），用 ping 本机做 1s 静默等待
+        lines.append(f'if not errorlevel 1 ( ping -n 2 127.0.0.1 >nul 2>nul & goto wait )')
         lines.append(f'xcopy /Y /S /E /I "{temp_dir}" "{app_dir}" >nul 2>nul')
         # 显式双保险：服务器 manifest 覆盖本地 manifest
         if manifest_name:
@@ -294,7 +296,8 @@ def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None):
         lines.append(f'rd /S /Q "{temp_dir}" 2>nul')
         for f in to_delete:
             lines.append(f'del /F /Q "{os.path.join(app_dir, f)}" 2>nul')
-        lines.append(f'start "" "{exe_path}"')
+        # 用 start /min + /b 避免重启 launcher 时产生瞬间闪烁的新控制台
+        lines.append(f'start "" /MIN "{exe_path}"')
         lines.append(f'del "%~f0"')
         with open(script_path, "w", encoding="utf-8") as f:
             f.write("\r\n".join(lines))
@@ -437,28 +440,23 @@ def check_update(status_label=None):
 
     print(f"[Update] {_direction} needed: binary={version} local_manifest={_local_ver} remote={remote_version}")
 
-    # 扫描本地文件
-    local_files = _scan_local_files(app_dir, ignore_patterns)
-
-    # 比对
+    # 比对：只以 manifest.files 里列出的文件为真相
+    #   - 只检查 manifest 里声明的每个文件：本地存在且 hash 相同 → 跳过
+    #   - 不反向扫描本地多余文件 → dbs/ logs/ 用户自定义文件等永远不会被当作 to_delete
+    # 这样运行时产生的 db/logs 即便目录里真的有，也不会触发任何比对动作（根因 3 解决）
     to_download = []
     to_delete = []
-
-    for path, remote_hash in remote_files.items():
-        if path not in local_files:
-            to_download.append(path)
-        elif local_files[path] != remote_hash:
-            to_download.append(path)
-
-    for path in local_files:
-        if path not in remote_files and not _is_ignored(path, ignore_patterns):
-            # 兜底：再排除 manifest-*.json（问题② 双重保险）
-            basename = os.path.basename(path)
-            if basename in ("manifest.json", "update.bat", "update.sh"):
-                continue
-            if basename.startswith("manifest-") and basename.endswith(".json"):
-                continue
-            to_delete.append(path)
+    for rel, remote_hash in remote_files.items():
+        local_path = os.path.join(app_dir, rel.replace("/", os.sep))
+        if not os.path.isfile(local_path):
+            to_download.append(rel)
+            continue
+        try:
+            local_hash = _sha256_file(local_path)
+        except Exception:
+            local_hash = None
+        if local_hash != remote_hash:
+            to_download.append(rel)
 
     if not to_download and not to_delete:
         return False  # 没有实际变化
@@ -467,9 +465,8 @@ def check_update(status_label=None):
     temp_dir = tempfile.mkdtemp(prefix="bomiot_update_")
 
     # ========= 前置探测：远端版本目录是否真实存在 =========
-    # 防止服务器只更新了 manifest.json 但忘了同步 GreaterWMS-{version}-{Platform}/ 文件夹，
-    # 否则会在首个 404 文件上触发 3×60s 下载重试卡死 splash。
-    # 只有 to_download 非空时才需要探测；纯删除场景（只有 to_delete）不需要下载，跳过探测。
+    # 防止服务器只更新了 manifest 但忘了同步 GreaterWMS-{version}-{Platform}/ 文件夹，
+    # 否则会在首个文件 404 时触发 3×60s 下载重试卡死 splash。
     if to_download:
         _probe_url = file_base_url + to_download[0]
         _ok, _reason = _url_head_ok(_probe_url, timeout=5.0, max_retries=2)
@@ -518,12 +515,37 @@ def check_update(status_label=None):
     # 生成更新脚本（传 manifest_name 进去，生成显式 copy 行，保证服务器 manifest 覆盖本地）
     script_path = _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=manifest_name)
 
-    # 启动脚本
+    # 启动脚本（静默：不弹任何 cmd / terminal 黑框）
     is_win = sys.platform == "win32"
     if is_win:
-        subprocess.Popen(["cmd", "/c", script_path], cwd=app_dir)
+        # CREATE_NO_WINDOW = 0x08000000 —— 子进程不创建控制台窗口（核心开关，cmd /c bat 完全不可见）
+        # DETACHED_PROCESS  = 0x00000008 —— 不继承父进程控制台，随父进程退出继续运行
+        # CREATE_NEW_PROCESS_GROUP = 0x00000200 —— Ctrl+C / 退出信号隔离，父进程关不掉它
+        CREATE_NO_WINDOW          = getattr(subprocess, "CREATE_NO_WINDOW",          0x08000000)
+        DETACHED_PROCESS          = getattr(subprocess, "DETACHED_PROCESS",          0x00000008)
+        CREATE_NEW_PROCESS_GROUP  = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP",  0x00000200)
+        startupinfo = subprocess.STARTUPINFO()
+        # STARTF_USESHOWWINDOW + SW_HIDE —— 最后一道防线：即使 cmd 被系统强制开了窗口也强制隐藏
+        startupinfo.dwFlags  |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0  # SW_HIDE
+        subprocess.Popen(
+            ["cmd", "/c", script_path],
+            cwd=app_dir,
+            stdin=None, stdout=None, stderr=None,
+            close_fds=True,
+            shell=False,
+            startupinfo=startupinfo,
+            creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+        )
     else:
-        subprocess.Popen(["bash", script_path], cwd=app_dir)
+        subprocess.Popen(
+            ["bash", script_path],
+            cwd=app_dir,
+            stdin=None, stdout=None, stderr=None,
+            close_fds=True,
+            shell=False,
+            start_new_session=True,  # 等价 setsid，父进程退出后脚本继续
+        )
 
     return True
 

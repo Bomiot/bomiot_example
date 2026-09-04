@@ -492,7 +492,7 @@ jobs:
                   full = os.path.join(root, fn)
                   rel = os.path.relpath(full, dist).replace(os.sep, "/")
 
-                  # Skip files matching .gitignore
+                  # Skip files matching .gitignore（dist 里的 .gitignore 是仓库原文件，已包含 dbs/ logs/ __pycache__ *.sqlite3 *.db *.log *.pyc 等全部忽略规则）
                   if is_ignored(rel):
                       continue
 
