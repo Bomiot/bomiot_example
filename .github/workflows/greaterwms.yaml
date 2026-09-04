@@ -1,8 +1,8 @@
 name: Bomiot Build
 
 env:
-  APP_NAME: "GreaterWMS"  # Application name (globally shared)
-  # BASE_VERSION 不再硬编码，由 CI 从 launcher.py 自动读取（见下方 step）
+  # APP_NAME / BASE_VERSION 不再硬编码，由 CI 从 launcher.py 自动读取（见下方 step）
+  # launcher.py 是 app_name 与 version 的唯一来源，改一处即可。
 
 
 on:
@@ -23,13 +23,15 @@ jobs:
       # Check-out repository
       - uses: actions/checkout@v4
 
-      # 从 launcher.py 提取 version，作为全局 BASE_VERSION（唯一版本号来源）
-      - name: Read version from launcher.py
+      # 从 launcher.py 提取 app_name 与 version，作为全局唯一来源（改 launcher.py 一处即可）
+      - name: Read app_name & version from launcher.py
         shell: bash
         run: |
-          VERSION=$(grep 'version = ' launcher.py | head -1 | sed 's/.*version = "//;s/".*//')
+          APP_NAME_VAL=$(grep '^app_name = ' launcher.py | head -1 | sed 's/.*app_name = "//;s/".*//')
+          VERSION=$(grep '^version = ' launcher.py | head -1 | sed 's/.*version = "//;s/".*//')
+          echo "APP_NAME=$APP_NAME_VAL" >> $GITHUB_ENV
           echo "BASE_VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Detected version: $VERSION"
+          echo "Detected app_name: $APP_NAME_VAL  version: $VERSION"
 
       # Setup Python
       - uses: actions/setup-python@v5
@@ -86,10 +88,10 @@ jobs:
       #   Nuitka basename rule: {folder}.py  →  {folder}.dist/{folder}.exe  (windows)
       #                                      →  {folder}.dist/{folder}      (linux)
       #   Follow-up step strips the ".dist" suffix, leaving exactly the version-named folder.
-      - name: Rename launcher.py → ${{ steps.platform.outputs.folder }}.py (windows)
+      - name: Rename launcher.py → ${{ env.APP_NAME }}.py (windows)
         if: matrix.os == 'windows-latest'
         shell: bash
-        run: cp launcher.py "${{ steps.platform.outputs.folder }}.py"
+        run: cp launcher.py "${{ env.APP_NAME }}.py"
 
       # Build python script into a single execute or app folder (windows)
       - uses: Nuitka/Nuitka-Action@main
@@ -97,7 +99,7 @@ jobs:
         with:
           jobs: 16
           nuitka-version: 4.1.3
-          script-name: ${{ steps.platform.outputs.folder }}.py
+          script-name: ${{ env.APP_NAME }}.py
           mode: standalone
           company-name: ${{ env.APP_NAME }}
           product-name: ${{ env.APP_NAME }}
@@ -186,21 +188,21 @@ jobs:
           PYTHONIOENCODING: "utf-8"
 
       # Strip ".dist" suffix so the build folder is exactly APP_NAME-VERSION-OS (no extra extension)
-      - name: Rename {folder}.dist → {folder} (windows)
+      - name: Rename GreaterWMS.dist → {folder} (windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $SRC = "build/${{ steps.platform.outputs.folder }}.dist"
+          $SRC = "build/${{ env.APP_NAME }}.dist"
           $DST = "build/${{ steps.platform.outputs.folder }}"
           if (Test-Path $DST) { Remove-Item -Recurse -Force $DST }
           Rename-Item -Path $SRC -NewName "${{ steps.platform.outputs.folder }}" -Force
           Write-Host "Renamed: $SRC -> $DST"
 
       # Rename entry script → APP_NAME-VERSION-OS.py (macos)
-      - name: Rename launcher.py → ${{ steps.platform.outputs.folder }}.py (macos)
+      - name: Rename launcher.py → ${{ env.APP_NAME }}.py (macos)
         if: matrix.os == 'macos-latest'
         shell: bash
-        run: cp launcher.py "${{ steps.platform.outputs.folder }}.py"
+        run: cp launcher.py "${{ env.APP_NAME }}.py"
 
       # Build python script into a single execute or app folder (macos)
       - uses: Nuitka/Nuitka-Action@main
@@ -208,7 +210,7 @@ jobs:
         with:
           jobs: 16
           nuitka-version: 4.1.3
-          script-name: ${{ steps.platform.outputs.folder }}.py
+          script-name: ${{ env.APP_NAME }}.py
           mode: standalone
           company-name: ${{ env.APP_NAME }}
           product-name: ${{ env.APP_NAME }}
@@ -299,11 +301,11 @@ jobs:
           PYTHONIOENCODING: "utf-8"
 
       # Strip ".dist" suffix for macOS if present (macOS standalone also produces a .app bundle which is used for manifest)
-      - name: Rename {folder}.dist → {folder} (macos, if applicable)
+      - name: Rename GreaterWMS.dist → {folder} (macos, if applicable)
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          SRC="build/${{ steps.platform.outputs.folder }}.dist"
+          SRC="build/${{ env.APP_NAME }}.dist"
           DST="build/${{ steps.platform.outputs.folder }}"
           if [ -d "$SRC" ]; then
             if [ -d "$DST" ]; then rm -rf "$DST"; fi
@@ -314,10 +316,10 @@ jobs:
           fi
 
       # Rename entry script → APP_NAME-VERSION-OS.py (ubuntu)
-      - name: Rename launcher.py → ${{ steps.platform.outputs.folder }}.py (ubuntu)
+      - name: Rename launcher.py → ${{ env.APP_NAME }}.py (ubuntu)
         if: matrix.os == 'ubuntu-22.04'
         shell: bash
-        run: cp launcher.py "${{ steps.platform.outputs.folder }}.py"
+        run: cp launcher.py "${{ env.APP_NAME }}.py"
 
       # Build python script into a single execute or app folder (Ubuntu)
       - uses: Nuitka/Nuitka-Action@main
@@ -325,7 +327,7 @@ jobs:
         with:
           jobs: 16
           nuitka-version: 4.1.3
-          script-name: ${{ steps.platform.outputs.folder }}.py
+          script-name: ${{ env.APP_NAME }}.py
           mode: standalone
           company-name: ${{ env.APP_NAME }}
           product-name: ${{ env.APP_NAME }}
@@ -411,11 +413,11 @@ jobs:
           PYTHONIOENCODING: "utf-8"
 
       # Strip ".dist" suffix: build/GreaterWMS-3.0.0-Linux.dist → build/GreaterWMS-3.0.0-Linux
-      - name: Rename {folder}.dist → {folder} (ubuntu)
+      - name: Rename GreaterWMS.dist → {folder} (ubuntu)
         if: matrix.os == 'ubuntu-22.04'
         shell: bash
         run: |
-          SRC="build/${{ steps.platform.outputs.folder }}.dist"
+          SRC="build/${{ env.APP_NAME }}.dist"
           DST="build/${{ steps.platform.outputs.folder }}"
           if [ -d "$DST" ]; then rm -rf "$DST"; fi
           mv "$SRC" "$DST"
@@ -504,8 +506,30 @@ jobs:
                   if is_ignored(rel):
                       continue
 
-                  with open(full, "rb") as f:
-                      files[rel] = hashlib.sha256(f.read()).hexdigest()
+                  # 大文件（≥8MiB）用块级格式：记录整体 sha256 + 每块 sha256，
+                  # 客户端更新时只下载变化的块（HTTP Range），显著减少流量。
+                  BLOCK_SIZE = 1024 * 1024
+                  BLOCK_THRESHOLD = 8 * 1024 * 1024
+                  file_size = os.path.getsize(full)
+                  if file_size >= BLOCK_THRESHOLD:
+                      full_hash = hashlib.sha256()
+                      blocks = []
+                      with open(full, "rb") as f:
+                          while True:
+                              chunk = f.read(BLOCK_SIZE)
+                              if not chunk:
+                                  break
+                              full_hash.update(chunk)
+                              blocks.append(hashlib.sha256(chunk).hexdigest())
+                      files[rel] = {
+                          "size": file_size,
+                          "sha256": full_hash.hexdigest(),
+                          "block_size": BLOCK_SIZE,
+                          "blocks": blocks,
+                      }
+                  else:
+                      with open(full, "rb") as f:
+                          files[rel] = hashlib.sha256(f.read()).hexdigest()
 
           manifest = {
               "app_name": os.environ.get("APP_NAME", "GreaterWMS"),
@@ -546,7 +570,10 @@ jobs:
               if i >= 20:
                   print(f"  ... and {len(files) - 20} more")
                   break
-              print(f"  {path}: {h[:16]}...")
+              if isinstance(h, dict):
+                  print(f"  {path}: [block] {h['sha256'][:16]}... ({h['size']} bytes, {len(h['blocks'])} blocks)")
+              else:
+                  print(f"  {path}: {h[:16]}...")
 
       # Uploads artifact: version-named folder (for server releases/) + platform manifest file
       # Unzipping the artifact yields: GreaterWMS-x.x.x-OS/ (all files) + manifest-xxx.json

@@ -100,6 +100,13 @@ def _is_ignored(rel_path, patterns):
     return False
 
 
+# 块级增量更新参数
+# 大于 BLOCK_THRESHOLD 的文件在 manifest 中以分块形式记录，
+# 更新时只下载 hash 不同的块（HTTP Range），避免整文件重下。
+BLOCK_SIZE = 1024 * 1024          # 每块 1 MiB
+BLOCK_THRESHOLD = 8 * 1024 * 1024  # ≥ 8 MiB 才启用分块
+
+
 def _sha256_file(path):
     """计算单个文件的 SHA256"""
     h = hashlib.sha256()
@@ -107,6 +114,32 @@ def _sha256_file(path):
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _hash_blocks(path, block_size=BLOCK_SIZE):
+    """将文件按 block_size 分块，返回每块的 SHA256 列表。"""
+    hashes = []
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(block_size)
+            if not chunk:
+                break
+            hashes.append(hashlib.sha256(chunk).hexdigest())
+    return hashes
+
+
+def _is_block_entry(val):
+    """manifest 中的条目是否为块级格式（dict 含 blocks）。"""
+    return isinstance(val, dict) and isinstance(val.get("blocks"), list) and "sha256" in val
+
+
+def _entry_sha256(val):
+    """从 manifest 条目（字符串或块级 dict）取整体 SHA256。"""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        return val.get("sha256")
+    return None
 
 
 def _scan_local_files(app_dir, ignore_patterns):
@@ -149,6 +182,50 @@ def _download(url, dest, max_retries=3):
                         break
                     f.write(chunk)
             return
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries:
+                sleep(1 * attempt)
+    raise last_err
+
+
+def _download_range(url, dest, byte_start, byte_end, max_retries=3):
+    """
+    用 HTTP Range 下载 [byte_start, byte_end] 字节段，写入 dest 的指定偏移。
+    若服务器不支持 Range（返回 200 全文），回退为整文件下载。
+    返回 True 表示 Range 成功，False 表示回退到整文件。
+    """
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "GreaterWMS-Updater",
+                    "Range": f"bytes={byte_start}-{byte_end}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                status = getattr(resp, "status", 200)
+                if status == 206:
+                    # 支持 Range：写入指定偏移
+                    with open(dest, "r+b") as f:
+                        f.seek(byte_start)
+                        while True:
+                            chunk = resp.read(65536)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    return True
+                else:
+                    # 服务器不支持 Range（返回 200），整文件写入
+                    with open(dest, "wb") as f:
+                        while True:
+                            chunk = resp.read(65536)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    return False
         except Exception as e:
             last_err = e
             if attempt < max_retries:
@@ -477,23 +554,50 @@ def check_update(status_label=None):
         # ==== 标准路径：双 manifest 双向差分 ====
         A_keys = set(remote_files.keys())
         B_keys = set(local_files.keys())
-        # 1) A ∩ B：交集，逐文件比较 hash
+        # 1) A ∩ B：交集，逐文件比较（大文件走块级增量，小文件走整文件 hash）
         for rel in A_keys & B_keys:
-            remote_hash = remote_files[rel]
+            remote_entry = remote_files[rel]
+            remote_hash = _entry_sha256(remote_entry)
             local_path = os.path.join(app_dir, rel.replace("/", os.sep))
             # 保护锁：本地 manifest 声明过但运行时被用户删掉了 → 按"缺失"重下
             if not os.path.isfile(local_path):
-                to_download.append(rel)
+                to_download.append({"path": rel})
                 continue
-            try:
-                local_hash = _sha256_file(local_path)
-            except Exception:
-                local_hash = None
-            if local_hash != remote_hash:
-                to_download.append(rel)
-        # 2) A − B：远端新增（本地 manifest 未声明过的新文件）
+            # 块级增量：远端是块级条目 → 比对每个块的 hash
+            if _is_block_entry(remote_entry):
+                remote_blocks = remote_entry["blocks"]
+                block_size = remote_entry.get("block_size", BLOCK_SIZE)
+                try:
+                    local_blocks = _hash_blocks(local_path, block_size)
+                except Exception:
+                    local_blocks = []
+                # 块数一致且每块 hash 都相同 → 文件未变
+                if (len(local_blocks) == len(remote_blocks)
+                        and all(lb == rb for lb, rb in zip(local_blocks, remote_blocks))):
+                    continue
+                # 收集变化的块索引（本地没有的块也算变化）
+                changed = [
+                    i for i in range(len(remote_blocks))
+                    if i >= len(local_blocks) or local_blocks[i] != remote_blocks[i]
+                ]
+                to_download.append({
+                    "path": rel,
+                    "blocks": changed,
+                    "block_size": block_size,
+                    "size": remote_entry.get("size"),
+                    "sha256": remote_hash,
+                })
+            else:
+                # 小文件：整文件 hash 比对
+                try:
+                    local_hash = _sha256_file(local_path)
+                except Exception:
+                    local_hash = None
+                if local_hash != remote_hash:
+                    to_download.append({"path": rel})
+        # 2) A − B：远端新增（本地 manifest 未声明过的新文件）→ 整文件下载
         for rel in A_keys - B_keys:
-            to_download.append(rel)
+            to_download.append({"path": rel})
         # 3) B − A：CI 在上个版本声明过但本次远端 manifest 里消失了 → 视为升级/回滚时移除
         #    同时做一层双保险：这些条目必须同时能通过 _scan_local_files 使用的
         #    .gitignore + manifest-*.json 排除规则，防止 B−A 被恶意 manifest 用来
@@ -524,17 +628,18 @@ def check_update(status_label=None):
     else:
         # ==== 退化路径：本地 manifest 无 files → 单向只看远端（不删任何东西）====
         print("[Update] local manifest missing 'files', falling back to one-way compare (no delete)")
-        for rel, remote_hash in remote_files.items():
+        for rel, remote_entry in remote_files.items():
+            remote_hash = _entry_sha256(remote_entry)
             local_path = os.path.join(app_dir, rel.replace("/", os.sep))
             if not os.path.isfile(local_path):
-                to_download.append(rel)
+                to_download.append({"path": rel})
                 continue
             try:
                 local_hash = _sha256_file(local_path)
             except Exception:
                 local_hash = None
             if local_hash != remote_hash:
-                to_download.append(rel)
+                to_download.append({"path": rel})
 
     print(f"[Update] diff stats: to_download={len(to_download)}  to_delete(B−A)={len(to_delete)}  "
           f"(remote.files={len(remote_files)}  local.files={len(local_files) if isinstance(local_files, dict) else 'N/A'})")
@@ -549,7 +654,8 @@ def check_update(status_label=None):
     # 防止服务器只更新了 manifest 但忘了同步 GreaterWMS-{version}-{Platform}/ 文件夹，
     # 否则会在首个文件 404 时触发 3×60s 下载重试卡死 splash。
     if to_download:
-        _probe_url = file_base_url + to_download[0]
+        _probe_path = to_download[0]["path"]
+        _probe_url = file_base_url + _probe_path
         _ok, _reason = _url_head_ok(_probe_url, timeout=5.0, max_retries=2)
         if not _ok:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -562,13 +668,45 @@ def check_update(status_label=None):
                 status_label.config(text=err_msg)
                 status_label.update()
             return False
-        print(f"[Update] Remote version folder verified via HEAD: {to_download[0]} ({_reason})")
+        print(f"[Update] Remote version folder verified via HEAD: {_probe_path} ({_reason})")
 
-    for path in to_download:
+    for item in to_download:
+        path = item["path"]
         url = file_base_url + path
         dest = os.path.join(temp_dir, path.replace("/", os.sep))
         try:
-            _download(url, dest)
+            blocks = item.get("blocks")
+            if blocks:
+                # ===== 块级增量：复制本地文件 + 只下载变化的块 =====
+                local_path = os.path.join(app_dir, path.replace("/", os.sep))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                if os.path.isfile(local_path):
+                    shutil.copyfile(local_path, dest)
+                else:
+                    # 本地无文件：从零创建，用 Range 下载所有块
+                    open(dest, "wb").close()
+                block_size = item["block_size"]
+                remote_size = item.get("size")
+                range_ok = True
+                for bi in blocks:
+                    byte_start = bi * block_size
+                    byte_end = min((bi + 1) * block_size, remote_size) - 1 if remote_size else byte_start + block_size - 1
+                    ok = _download_range(url, dest, byte_start, byte_end)
+                    if not ok:
+                        # 服务器不支持 Range，已整文件写入 dest
+                        range_ok = False
+                        break
+                # 校验整文件 SHA256，失败则回退整文件下载
+                if range_ok:
+                    try:
+                        actual = _sha256_file(dest)
+                    except Exception:
+                        actual = None
+                    if actual != item.get("sha256"):
+                        print(f"[Update] block verify mismatch for {path}, falling back to full download")
+                        _download(url, dest)
+            else:
+                _download(url, dest)
         except Exception as e:
             print(f"下载失败: {path} - {e}")
             # 问题③：下载失败时清理临时目录，避免系统 temp 堆积 bomiot_update_* 垃圾
@@ -594,13 +732,14 @@ def check_update(status_label=None):
         print(f"[Update] Warning: failed to write new manifest to temp: {e}")
 
     # 算出新 exe 在客户端目录里的绝对路径（当 version 或 platform display 变时，
-    # exe 名包含这些信息，下载下来就是另一个文件；此时 bat 必须 start 新 exe
-    # 才能让内置 version 常量真正更新，否则永远死循环）
+    # EXE 名固定为 app_name（如 GreaterWMS.exe），不再带版本号。
+    # 版本号通过 manifest 的 sha256/块级 hash 比对来判断是否需要更新，
+    # 同名 EXE 被 xcopy 覆盖后，新的内置 version 常量自然生效，不会死循环。
     _plat_is_win = sys.platform == "win32"
     if _plat_is_win:
-        new_exe_name = f"{app_name}-{remote_version}-{_display}.exe"
+        new_exe_name = f"{app_name}.exe"
     else:
-        new_exe_name = f"{app_name}-{remote_version}-{_display}"
+        new_exe_name = app_name
     new_exe_path = os.path.join(app_dir, new_exe_name)
 
     # 生成更新脚本（传 manifest_name 进去，生成显式 copy 行，保证服务器 manifest 覆盖本地）
