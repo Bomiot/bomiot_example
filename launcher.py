@@ -1,4 +1,4 @@
-import os, sys, json, hashlib, fnmatch, platform, subprocess, tempfile, shutil
+import os, sys, json, hashlib, fnmatch, platform, subprocess, tempfile, shutil, time
 from pathlib import Path
 from time import sleep
 import urllib.request
@@ -15,7 +15,7 @@ from PIL import Image, ImageTk
 import requests
 
 app_name = "GreaterWMS"
-version = "3.0.1"
+version = "3.0.0"
 port = 8008
 
 # === 增量更新配置（可修改为你的实际地址）===
@@ -270,17 +270,24 @@ def _url_head_ok(url, timeout=5.0, max_retries=2):
     return False, last_reason
 
 
-def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None):
+def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None,
+                           new_exe_path=None):
     """
-    生成跨平台更新脚本。
+    生成更新脚本（update.bat / update.sh），返回脚本路径。
 
-    manifest_name: 可选，若提供则在 xcopy/cp 之后再显式覆盖一次本地 manifest，
-                   确保「服务器 manifest 一定覆盖本地 manifest」，
-                   不依赖 xcopy/cp -rf 的递归行为（双保险）。
+    参数：
+      - new_exe_path：远端版本号对应的新 exe 的绝对路径（例如
+         {app_dir}/GreaterWMS-3.0.1-Windows.exe）。当版本升级导致 exe 名
+        包含版本号变化时，必须传该值；否则 bat 最后仍会 start 旧版本
+        号的 exe（sys.executable），导致重启后内置 version 仍是旧值
+        → 再次判定更新 → 死循环（用户看到"闪退"）。
     """
     is_win = sys.platform == "win32"
     exe_name = os.path.basename(sys.executable)
     exe_path = sys.executable
+    # 优先启动新 exe（版本号变化时新 exe 是另一个文件），否则回退到当前 exe
+    target_exe_path = new_exe_path if new_exe_path and os.path.isabs(new_exe_path) else exe_path
+    target_exe_name = os.path.basename(target_exe_path)
 
     if is_win:
         script_path = os.path.join(app_dir, "update.bat")
@@ -296,8 +303,13 @@ def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None):
         lines.append(f'rd /S /Q "{temp_dir}" 2>nul')
         for f in to_delete:
             lines.append(f'del /F /Q "{os.path.join(app_dir, f)}" 2>nul')
-        # 用 start /min + /b 避免重启 launcher 时产生瞬间闪烁的新控制台
-        lines.append(f'start "" /MIN "{exe_path}"')
+        # 先启动新 exe（target_exe_path），再用 ping 做 3s 延迟后删掉旧 exe（仅当新 exe 名 != 旧 exe 名时才需要删旧版）
+        #   - 不直接重命名旧 exe（文件占用可能失败）
+        #   - 不在 xcopy 之前删（旧 exe 正在运行）
+        lines.append(f'start "" /MIN "{target_exe_path}"')
+        if target_exe_name.lower() != exe_name.lower():
+            lines.append(f'ping -n 4 127.0.0.1 >nul 2>nul')
+            lines.append(f'del /F /Q "{exe_path}" 2>nul')
         lines.append(f'del "%~f0"')
         with open(script_path, "w", encoding="utf-8") as f:
             f.write("\r\n".join(lines))
@@ -312,7 +324,10 @@ def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None):
         lines.append(f'rm -rf "{temp_dir}"')
         for f in to_delete:
             lines.append(f'rm -f "{os.path.join(app_dir, f)}"')
-        lines.append(f'nohup "{exe_path}" > /dev/null 2>&1 &')
+        lines.append(f'nohup "{target_exe_path}" > /dev/null 2>&1 &')
+        if target_exe_name.lower() != exe_name.lower():
+            lines.append(f'sleep 3')
+            lines.append(f'rm -f "{exe_path}" 2>/dev/null')
         lines.append(f'rm -- "$0"')
         with open(script_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -440,23 +455,87 @@ def check_update(status_label=None):
 
     print(f"[Update] {_direction} needed: binary={version} local_manifest={_local_ver} remote={remote_version}")
 
-    # 比对：只以 manifest.files 里列出的文件为真相
-    #   - 只检查 manifest 里声明的每个文件：本地存在且 hash 相同 → 跳过
-    #   - 不反向扫描本地多余文件 → dbs/ logs/ 用户自定义文件等永远不会被当作 to_delete
-    # 这样运行时产生的 db/logs 即便目录里真的有，也不会触发任何比对动作（根因 3 解决）
+    # ================================================================
+    # 比对：双 manifest 交集模型（remote.files = A；local.files = B）
+    #   A ∩ B 且 hash(A) != hash(B)  → 下载更新（交集）
+    #   A − B （远端声明、本地没有）    → 下载新增（如新版本 exe）
+    #   B − A （本地声明、远端已删除）  → 列入 to_delete（如旧版本 exe、CI 已停止产出的 pyd/dll）
+    #
+    # 用户数据（dbs/ logs/ *.sqlite3 auth_key.py bomiot_ready.lock 等）
+    # 本来就不在 local.files（CI 生成 manifest 时走 .gitignore），所以不在 B，
+    # 永远不会进入 to_delete → 无需额外 protect-list。
+    #
+    # 保底：如果本地 manifest 缺 files（老版本、异常格式），退化为「只看远端」
+    # 单向模式（不做删除），避免误删。
+    # ================================================================
     to_download = []
     to_delete = []
-    for rel, remote_hash in remote_files.items():
-        local_path = os.path.join(app_dir, rel.replace("/", os.sep))
-        if not os.path.isfile(local_path):
+    local_files = local_manifest.get("files") if isinstance(local_manifest, dict) else None
+    if isinstance(local_files, dict):
+        # ==== 标准路径：双 manifest 双向差分 ====
+        A_keys = set(remote_files.keys())
+        B_keys = set(local_files.keys())
+        # 1) A ∩ B：交集，逐文件比较 hash
+        for rel in A_keys & B_keys:
+            remote_hash = remote_files[rel]
+            local_path = os.path.join(app_dir, rel.replace("/", os.sep))
+            # 保护锁：本地 manifest 声明过但运行时被用户删掉了 → 按"缺失"重下
+            if not os.path.isfile(local_path):
+                to_download.append(rel)
+                continue
+            try:
+                local_hash = _sha256_file(local_path)
+            except Exception:
+                local_hash = None
+            if local_hash != remote_hash:
+                to_download.append(rel)
+        # 2) A − B：远端新增（本地 manifest 未声明过的新文件）
+        for rel in A_keys - B_keys:
             to_download.append(rel)
-            continue
-        try:
-            local_hash = _sha256_file(local_path)
-        except Exception:
-            local_hash = None
-        if local_hash != remote_hash:
-            to_download.append(rel)
+        # 3) B − A：CI 在上个版本声明过但本次远端 manifest 里消失了 → 视为升级/回滚时移除
+        #    同时做一层双保险：这些条目必须同时能通过 _scan_local_files 使用的
+        #    .gitignore + manifest-*.json 排除规则，防止 B−A 被恶意 manifest 用来
+        #    指鹿为马删除用户自定义文件。
+        protected_prefix = ("dbs/", "logs/", "__pycache__/")
+        for rel in B_keys - A_keys:
+            # 永远不删 manifest-*.json / update.* / 已知运行时目录前缀
+            basename = os.path.basename(rel)
+            if basename in ("update.bat", "update.sh", "manifest.json"):
+                continue
+            if basename.startswith("manifest-") and basename.endswith(".json"):
+                continue
+            rel_norm = rel.replace("\\", "/")
+            skip_prefix = False
+            for p in protected_prefix:
+                if rel_norm.startswith(p) or ("/" + p).rstrip("/") + "/" in "/" + rel_norm:
+                    skip_prefix = True
+                    break
+            if skip_prefix:
+                continue
+            # 再用 .gitignore 过滤一遍（用户自己加的忽略规则在 B−A 这里不删）
+            if _is_ignored(rel_norm, ignore_patterns):
+                continue
+            # 最终保险：只有当本地真的存在这个被声明过的路径时才删
+            local_path = os.path.join(app_dir, rel.replace("/", os.sep))
+            if os.path.isfile(local_path):
+                to_delete.append(rel)
+    else:
+        # ==== 退化路径：本地 manifest 无 files → 单向只看远端（不删任何东西）====
+        print("[Update] local manifest missing 'files', falling back to one-way compare (no delete)")
+        for rel, remote_hash in remote_files.items():
+            local_path = os.path.join(app_dir, rel.replace("/", os.sep))
+            if not os.path.isfile(local_path):
+                to_download.append(rel)
+                continue
+            try:
+                local_hash = _sha256_file(local_path)
+            except Exception:
+                local_hash = None
+            if local_hash != remote_hash:
+                to_download.append(rel)
+
+    print(f"[Update] diff stats: to_download={len(to_download)}  to_delete(B−A)={len(to_delete)}  "
+          f"(remote.files={len(remote_files)}  local.files={len(local_files) if isinstance(local_files, dict) else 'N/A'})")
 
     if not to_download and not to_delete:
         return False  # 没有实际变化
@@ -512,46 +591,113 @@ def check_update(status_label=None):
         # 写 manifest 失败不阻止更新（否则更新失败但旧二进制还在），仅打日志
         print(f"[Update] Warning: failed to write new manifest to temp: {e}")
 
+    # 算出新 exe 在客户端目录里的绝对路径（当 version 或 platform display 变时，
+    # exe 名包含这些信息，下载下来就是另一个文件；此时 bat 必须 start 新 exe
+    # 才能让内置 version 常量真正更新，否则永远死循环）
+    _plat_is_win = sys.platform == "win32"
+    if _plat_is_win:
+        new_exe_name = f"{app_name}-{remote_version}-{_display}.exe"
+    else:
+        new_exe_name = f"{app_name}-{remote_version}-{_display}"
+    new_exe_path = os.path.join(app_dir, new_exe_name)
+
     # 生成更新脚本（传 manifest_name 进去，生成显式 copy 行，保证服务器 manifest 覆盖本地）
-    script_path = _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=manifest_name)
+    script_path = _generate_update_script(
+        app_dir, temp_dir, to_delete,
+        manifest_name=manifest_name,
+        new_exe_path=new_exe_path,
+    )
 
     # 启动脚本（静默：不弹任何 cmd / terminal 黑框）
     is_win = sys.platform == "win32"
-    if is_win:
-        # CREATE_NO_WINDOW = 0x08000000 —— 子进程不创建控制台窗口（核心开关，cmd /c bat 完全不可见）
-        # DETACHED_PROCESS  = 0x00000008 —— 不继承父进程控制台，随父进程退出继续运行
-        # CREATE_NEW_PROCESS_GROUP = 0x00000200 —— Ctrl+C / 退出信号隔离，父进程关不掉它
-        CREATE_NO_WINDOW          = getattr(subprocess, "CREATE_NO_WINDOW",          0x08000000)
-        DETACHED_PROCESS          = getattr(subprocess, "DETACHED_PROCESS",          0x00000008)
-        CREATE_NEW_PROCESS_GROUP  = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP",  0x00000200)
-        startupinfo = subprocess.STARTUPINFO()
-        # STARTF_USESHOWWINDOW + SW_HIDE —— 最后一道防线：即使 cmd 被系统强制开了窗口也强制隐藏
-        startupinfo.dwFlags  |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 0  # SW_HIDE
-        subprocess.Popen(
-            ["cmd", "/c", script_path],
-            cwd=app_dir,
-            stdin=None, stdout=None, stderr=None,
-            close_fds=True,
-            shell=False,
-            startupinfo=startupinfo,
-            creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-        )
-    else:
-        subprocess.Popen(
-            ["bash", script_path],
-            cwd=app_dir,
-            stdin=None, stdout=None, stderr=None,
-            close_fds=True,
-            shell=False,
-            start_new_session=True,  # 等价 setsid，父进程退出后脚本继续
-        )
+    _started_script = False
+    _script_err = ""
+    try:
+        if is_win:
+            CREATE_NO_WINDOW          = int(getattr(subprocess, "CREATE_NO_WINDOW",          0x08000000))
+            DETACHED_PROCESS          = int(getattr(subprocess, "DETACHED_PROCESS",          0x00000008))
+            CREATE_NEW_PROCESS_GROUP  = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP",  0x00000200))
+            flags = CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            startupinfo = subprocess.STARTUPINFO()
+            # STARTF_USESHOWWINDOW = 1，SW_HIDE = 0
+            try:
+                startupinfo.dwFlags = int(getattr(subprocess, "STARTF_USESHOWWINDOW", 1))
+            except Exception:
+                startupinfo.dwFlags = 1
+            startupinfo.wShowWindow = 0
+            subprocess.Popen(
+                ["cmd.exe", "/c", script_path],
+                cwd=app_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                shell=False,
+                startupinfo=startupinfo,
+                creationflags=flags,
+            )
+        else:
+            subprocess.Popen(
+                ["bash", script_path],
+                cwd=app_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                shell=False,
+                start_new_session=True,
+            )
+        _started_script = True
+    except Exception as e:
+        import traceback as _tb
+        _script_err = f"{type(e).__name__}: {e}\n{_tb.format_exc()}"
+        print(f"[Update] FATAL: failed to start update script.\n{_script_err}")
+        # 失败时把 trace 落盘，方便用户找闪退原因
+        try:
+            crash_log = os.path.join(app_dir, "update_crash.log")
+            with open(crash_log, "a", encoding="utf-8") as f:
+                f.write(f"===== {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+                f.write(f"script_path={script_path}\n")
+                f.write(_script_err)
+                f.write("\n")
+        except Exception:
+            pass
 
+    if not _started_script:
+        # 启动脚本失败：清理残留 + 不执行退出（继续跑 Django 启动，避免闪退+用户完全进不去）
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        try: os.remove(script_path)
+        except Exception: pass
+        if status_label:
+            status_label.config(text="更新脚本启动失败，跳过（详见 update_crash.log）")
+            status_label.update()
+        return False
+
+    # 给 bat 子进程 300ms 启动缓冲（防止本进程过快退出，bat 还没起来就被系统把父进程组里的子进程一起 terminate）
+    sleep(0.3)
     return True
 
 
 if __name__ == "__main__":
+    # 顶层兜底：任何未被捕获的异常写入 update_crash.log，避免用户只能看到「窗口灭了」没有任何线索
+    _app_dir_root = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+    _crash_log = os.path.join(_app_dir_root, "update_crash.log")
+    import traceback as _tb_main
+
+    def _write_crash(exc_type, exc_val, tb):
+        try:
+            with open(_crash_log, "a", encoding="utf-8") as f:
+                f.write(f"===== UNHANDLED EXCEPTION {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+                f.write(f"frozen={getattr(sys, 'frozen', False)} executable={sys.executable}\n")
+                f.write("".join(_tb_main.format_exception(exc_type, exc_val, tb)))
+                f.write("\n")
+        except Exception:
+            pass
+
+    sys.excepthook = _write_crash
+
     # Welcome page
+
     splash = tk.Tk()
     window_width = 675
     window_height = 329
