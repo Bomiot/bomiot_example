@@ -15,7 +15,7 @@ from PIL import Image, ImageTk
 import requests
 
 app_name = "GreaterWMS"
-version = "3.0.0"
+version = "3.0.1"
 port = 8008
 
 # === 增量更新配置（可修改为你的实际地址）===
