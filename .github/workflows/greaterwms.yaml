@@ -2,7 +2,7 @@ name: Bomiot Build
 
 env:
   APP_NAME: "GreaterWMS"  # Application name (globally shared)
-  BASE_VERSION: "3.0.0"  # Base version number (globally shared)
+  BASE_VERSION: "3.0.1"  # Base version number (globally shared)
 
 
 on:
