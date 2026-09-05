@@ -11,6 +11,7 @@ from os.path import join, exists
 from bomiot_token import encrypt_info
 from os import getcwd
 import tkinter as tk
+from tkinter import ttk
 from PIL import Image, ImageTk
 import requests
 
@@ -433,7 +434,7 @@ def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None,
     return script_path
 
 
-def check_update(status_label=None):
+def check_update(status_label=None, progress_bar=None):
     """
     Check and apply the incremental update.
     Returns True if an update was triggered (caller should exit), False if no update needed.
@@ -530,6 +531,9 @@ def check_update(status_label=None):
     _remote_ver = remote_manifest.get("version", "0")
     if _remote_ver == version:
         print(f"[Update] Version matches (binary {version} == remote {_remote_ver}), skipping hash scan")
+        if progress_bar:
+            progress_bar["value"] = 0
+            progress_bar.update()
         if status_label:
             status_label.config(text="已是最新版本")
             status_label.update()
@@ -549,6 +553,9 @@ def check_update(status_label=None):
     if status_label:
         status_label.config(text=f"发现新版本 {remote_version}（{_direction}），正在更新...")
         status_label.update()
+    if progress_bar:
+        progress_bar["value"] = 0
+        progress_bar.update()
 
     print(f"[Update] {_direction} needed: binary={version} local_manifest={_local_ver} remote={remote_version}")
 
@@ -688,6 +695,36 @@ def check_update(status_label=None):
             return False
         print(f"[Update] Remote version folder verified via HEAD: {_probe_path} ({_reason})")
 
+    # ========= Progress tracking: compute total download size (block-level known upfront) =========
+    # Block-level entries expose changed block count + block_size, so we know the byte budget before downloading.
+    # Small files (string-hash entries) have no size in the manifest; their size is added as they are downloaded.
+    total_bytes = 0
+    for item in to_download:
+        blks = item.get("blocks")
+        if blks:
+            total_bytes += len(blks) * item.get("block_size", BLOCK_SIZE)
+    downloaded_bytes = 0
+
+    def _update_progress(extra_text=""):
+        if not progress_bar:
+            return
+        pct = (downloaded_bytes / total_bytes * 100) if total_bytes > 0 else 0
+        progress_bar["value"] = min(pct, 100)
+        mb_done = downloaded_bytes / 1024 / 1024
+        mb_total = total_bytes / 1024 / 1024
+        if status_label:
+            if extra_text:
+                status_label.config(text=f"{extra_text}  {mb_done:.1f}MB / {mb_total:.1f}MB ({pct:.0f}%)")
+            else:
+                status_label.config(text=f"更新下载中  {mb_done:.1f}MB / {mb_total:.1f}MB ({pct:.0f}%)")
+            status_label.update()
+        progress_bar.update()
+
+    if progress_bar:
+        progress_bar["value"] = 0
+        progress_bar.update()
+        _update_progress(f"准备下载 {len(to_download)} 个文件")
+
     for item in to_download:
         path = item["path"]
         url = file_base_url + path
@@ -710,10 +747,15 @@ def check_update(status_label=None):
                     byte_start = bi * block_size
                     byte_end = min((bi + 1) * block_size, remote_size) - 1 if remote_size else byte_start + block_size - 1
                     ok = _download_range(url, dest, byte_start, byte_end)
-                    if not ok:
+                    if ok:
+                        downloaded_bytes += block_size
+                    else:
                         # Server does not support Range, the whole file has been written to dest
+                        # Adjust accounting: the full file was downloaded, not just this block
+                        downloaded_bytes += remote_size if remote_size else block_size
                         range_ok = False
                         break
+                    _update_progress(f"下载 {os.path.basename(path)}")
                 # Verify the whole-file SHA256; fall back to full download on mismatch
                 if range_ok:
                     try:
@@ -725,15 +767,26 @@ def check_update(status_label=None):
                         _download(url, dest)
             else:
                 _download(url, dest)
+                # Small file: add its actual size to both total and downloaded (size unknown before download)
+                fsize = os.path.getsize(dest)
+                total_bytes += fsize
+                downloaded_bytes += fsize
+                _update_progress(f"下载 {os.path.basename(path)}")
         except Exception as e:
             print(f"下载失败: {path} - {e}")
             # Issue ③: clean up the temp directory on download failure to avoid bomiot_update_* garbage piling up in system temp
             shutil.rmtree(temp_dir, ignore_errors=True)
+            if progress_bar:
+                progress_bar["value"] = 0
+                progress_bar.update()
             if status_label:
                 status_label.config(text="更新下载失败，跳过")
                 status_label.update()
             return False
 
+    if progress_bar:
+        progress_bar["value"] = 100
+        progress_bar.update()
     if status_label:
         status_label.config(text="更新下载完成，正在应用...")
         status_label.update()
@@ -861,14 +914,17 @@ if __name__ == "__main__":
 
     splash = tk.Tk()
     window_width = 675
-    window_height = 329
+    # Image area keeps 329px; bottom panel (status + progress bar) expanded by ~30% for readability
+    image_height = 329
+    bottom_height = 90
+    window_height = image_height + bottom_height
     x = int(splash.winfo_screenwidth() / 2 - window_width / 2)
     y = int(splash.winfo_screenheight() / 2 - window_height / 2)
-    canvas = tk.Canvas(splash, width=window_width, height=window_height, bg='white', highlightthickness=0)
+    canvas = tk.Canvas(splash, width=window_width, height=image_height, bg='white', highlightthickness=0)
     canvas.pack()
 
     splash.title("Welcome to Bomiot")
-    splash.geometry(f'675x349+{x}+{y}')
+    splash.geometry(f'{window_width}x{window_height}+{x}+{y}')
     splash.overrideredirect(True)  # Borderless display
     # Load and scale image (maintain aspect ratio)
     try:
@@ -906,13 +962,16 @@ if __name__ == "__main__":
     # Force window refresh to ensure splash is displayed before subsequent operations
     splash.update()
 
-    # Incremental update status label
-    status_label = tk.Label(splash, text="正在检查更新...", font=("Arial", 10), bg='white', fg='#888888')
-    status_label.pack(side='bottom', pady=5)
+    # Incremental update status label (larger font for readability)
+    status_label = tk.Label(splash, text="正在检查更新...", font=("Arial", 12), bg='white', fg='#555555')
+    status_label.pack(side='bottom', pady=4)
+    # Dynamic progress bar driven by known total download size
+    progress_bar = ttk.Progressbar(splash, orient='horizontal', length=500, mode='determinate', maximum=100)
+    progress_bar.pack(side='bottom', pady=2)
     splash.update()
 
     # Check for updates (if update found, generate script and exit; otherwise continue startup)
-    if check_update(status_label):
+    if check_update(status_label, progress_bar):
         splash.destroy()
         sys.exit(0)
 
