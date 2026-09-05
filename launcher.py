@@ -18,17 +18,17 @@ app_name = "GreaterWMS"
 version = "3.0.1"
 port = 8008
 
-# === 增量更新配置（可修改为你的实际地址）===
-# 远端 releases 目录的 base URL，launcher 会自动拼接 manifest 和版本文件路径
-# 结构: {UPDATE_URL}manifest-{os}-{arch}.json  和  {UPDATE_URL}GreaterWMS-{version}-{Platform}/
+# === Incremental update config (change to your actual address) ===
+# Base URL of the remote releases directory; launcher auto-appends manifest and version file paths
+# Layout: {UPDATE_URL}manifest-{os}-{arch}.json  and  {UPDATE_URL}GreaterWMS-{version}-{Platform}/
 UPDATE_URL = "http://127.0.0.1:8000/media/update/"
-# 归一化：确保 UPDATE_URL 以 "/" 结尾（为空时保持空），避免拼接时少 "/" 导致 404
+# Normalize: ensure UPDATE_URL ends with "/" (keep empty if empty) to avoid 404 from a missing "/" when concatenating
 if UPDATE_URL:
     UPDATE_URL = UPDATE_URL.rstrip("/") + "/"
 
 
 def _detect_platform():
-    """检测当前平台，返回 (os_str, arch_str, platform_display)"""
+    """Detect the current platform, return (os_str, arch_str, platform_display)"""
     if sys.platform == "win32":
         _os = "windows"
         _display = "Windows"
@@ -66,15 +66,15 @@ def _find_available_port(start_port: int, max_tries: int = 100) -> int:
     raise RuntimeError(f"No available port in range [{start_port}, {start_port + max_tries - 1}]")
 
 
-# === 增量更新 ===
+# === Incremental update ===
 
 def _app_dir():
-    """返回 launcher 所在目录（launcher.dist/）"""
+    """Return the directory where launcher resides (launcher.dist/)"""
     return os.path.dirname(sys.executable)
 
 
 def _read_gitignore(app_dir):
-    """读取 .gitignore 规则列表"""
+    """Read the .gitignore rule list"""
     patterns = []
     gi = os.path.join(app_dir, ".gitignore")
     if not os.path.exists(gi):
@@ -88,7 +88,7 @@ def _read_gitignore(app_dir):
 
 
 def _is_ignored(rel_path, patterns):
-    """判断文件是否被 .gitignore 规则匹配"""
+    """Check whether a file matches any .gitignore rule"""
     basename = os.path.basename(rel_path)
     for pat in patterns:
         if fnmatch.fnmatch(rel_path, pat) or fnmatch.fnmatch(basename, pat):
@@ -100,15 +100,15 @@ def _is_ignored(rel_path, patterns):
     return False
 
 
-# 块级增量更新参数
-# 大于 BLOCK_THRESHOLD 的文件在 manifest 中以分块形式记录，
-# 更新时只下载 hash 不同的块（HTTP Range），避免整文件重下。
-BLOCK_SIZE = 1024 * 1024          # 每块 1 MiB
-BLOCK_THRESHOLD = 8 * 1024 * 1024  # ≥ 8 MiB 才启用分块
+# Block-level incremental update parameters
+# Files larger than BLOCK_THRESHOLD are recorded in block format in the manifest,
+# so updates only download blocks whose hash differs (HTTP Range), avoiding re-downloading the whole file.
+BLOCK_SIZE = 1024 * 1024          # each block is 1 MiB
+BLOCK_THRESHOLD = 8 * 1024 * 1024  # enable block mode for files >= 8 MiB
 
 
 def _sha256_file(path):
-    """计算单个文件的 SHA256"""
+    """Compute the SHA256 of a single file"""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -117,7 +117,7 @@ def _sha256_file(path):
 
 
 def _hash_blocks(path, block_size=BLOCK_SIZE):
-    """将文件按 block_size 分块，返回每块的 SHA256 列表。"""
+    """Split a file into blocks of block_size and return the list of per-block SHA256 hashes."""
     hashes = []
     with open(path, "rb") as f:
         while True:
@@ -129,12 +129,12 @@ def _hash_blocks(path, block_size=BLOCK_SIZE):
 
 
 def _is_block_entry(val):
-    """manifest 中的条目是否为块级格式（dict 含 blocks）。"""
+    """Whether a manifest entry is in block-level format (a dict containing 'blocks')."""
     return isinstance(val, dict) and isinstance(val.get("blocks"), list) and "sha256" in val
 
 
 def _entry_sha256(val):
-    """从 manifest 条目（字符串或块级 dict）取整体 SHA256。"""
+    """Get the overall SHA256 from a manifest entry (a string or a block-level dict)."""
     if isinstance(val, str):
         return val
     if isinstance(val, dict):
@@ -144,11 +144,11 @@ def _entry_sha256(val):
 
 def _scan_local_files(app_dir, ignore_patterns):
     """
-    扫描本地所有文件，返回 {相对路径: SHA256}。
-    跳过：.gitignore 匹配的 / manifest.json / manifest-*.json / update.bat / update.sh
-    —— manifest-*.json 必须排除，否则远端 files 里不含它时会被加入 to_delete，
-       更新后本地 manifest 被删，下次启动永久跳过更新检查（问题②）。
-    注：当前 check_update 比对逻辑改为「只以 manifest.files 为准」，该函数已不被主流程调用，保留作为调试工具。
+    Scan all local files and return {relative_path: SHA256}.
+    Skip: .gitignore matches / manifest.json / manifest-*.json / update.bat / update.sh
+    -- manifest-*.json must be excluded, otherwise when it is absent from remote files it would be added to to_delete,
+       and after the update the local manifest gets deleted, permanently skipping the update check on next startup (issue 2).
+    Note: the current check_update diff logic has been changed to "rely only on manifest.files"; this function is no longer called by the main flow, kept as a debugging tool.
     """
     result = {}
     for root, dirs, files in os.walk(app_dir):
@@ -169,7 +169,7 @@ def _scan_local_files(app_dir, ignore_patterns):
 
 
 def _download(url, dest, max_retries=3):
-    """下载文件到指定路径，带重试"""
+    """Download a file to the given path, with retries"""
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     last_err = None
     for attempt in range(1, max_retries + 1):
@@ -191,9 +191,9 @@ def _download(url, dest, max_retries=3):
 
 def _download_range(url, dest, byte_start, byte_end, max_retries=3):
     """
-    用 HTTP Range 下载 [byte_start, byte_end] 字节段，写入 dest 的指定偏移。
-    若服务器不支持 Range（返回 200 全文），回退为整文件下载。
-    返回 True 表示 Range 成功，False 表示回退到整文件。
+    Download the byte range [byte_start, byte_end] via HTTP Range and write it to dest at the given offset.
+    If the server does not support Range (returns 200 full body), fall back to downloading the whole file.
+    Returns True if Range succeeded, False if it fell back to the whole file.
     """
     last_err = None
     for attempt in range(1, max_retries + 1):
@@ -208,7 +208,7 @@ def _download_range(url, dest, byte_start, byte_end, max_retries=3):
             with urllib.request.urlopen(req, timeout=60) as resp:
                 status = getattr(resp, "status", 200)
                 if status == 206:
-                    # 支持 Range：写入指定偏移
+                    # Range supported: write at the given offset
                     with open(dest, "r+b") as f:
                         f.seek(byte_start)
                         while True:
@@ -218,7 +218,7 @@ def _download_range(url, dest, byte_start, byte_end, max_retries=3):
                             f.write(chunk)
                     return True
                 else:
-                    # 服务器不支持 Range（返回 200），整文件写入
+                    # Server does not support Range (returns 200), write the whole file
                     with open(dest, "wb") as f:
                         while True:
                             chunk = resp.read(65536)
@@ -235,16 +235,16 @@ def _download_range(url, dest, byte_start, byte_end, max_retries=3):
 
 def _fetch_manifest(url, max_retries=3):
     """
-    下载并解析远端 manifest JSON，带重试与健壮的错误处理。
+    Download and parse the remote manifest JSON, with retries and robust error handling.
 
-    处理场景：
-      - 服务器返回空内容（0 字节）
-      - HTTP 404/5xx 错误
-      - 返回非 JSON（如 HTML 错误页、空行、纯文本）
-      - JSON 缺少必要字段（app_name / version / files）
-      - 网络超时 / 连接失败
+    Handles:
+      - Server returns empty content (0 bytes)
+      - HTTP 404/5xx errors
+      - Non-JSON response (e.g. HTML error page, blank line, plain text)
+      - JSON missing required fields (app_name / version / files)
+      - Network timeout / connection failure
 
-    返回解析成功的 dict；失败则抛出异常（调用方统一捕获处理）。
+    Returns the parsed dict on success; raises on failure (caller handles uniformly).
     """
     last_err = None
     for attempt in range(1, max_retries + 1):
@@ -252,23 +252,23 @@ def _fetch_manifest(url, max_retries=3):
             req = urllib.request.Request(url, headers={"User-Agent": "GreaterWMS-Updater"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 status = getattr(resp, "status", 200)
-                # 1. HTTP 状态码检查（urlopen 对 4xx/5xx 会抛 HTTPError，这里额外防御）
+                # 1. HTTP status check (urlopen raises HTTPError on 4xx/5xx; this is extra defense)
                 if status < 200 or status >= 300:
                     raise RuntimeError(f"HTTP {status}")
                 raw = resp.read()
-                # 2. 空响应检查
+                # 2. Empty response check
                 if not raw or not raw.strip():
                     raise RuntimeError("empty response (0 bytes)")
-                # 3. JSON 解析（防御 HTML/404 页面等非 JSON 内容）
+                # 3. JSON parse (defend against non-JSON content like HTML/404 pages)
                 try:
                     data = json.loads(raw.decode("utf-8"))
                 except (json.JSONDecodeError, UnicodeDecodeError) as e:
                     snippet = raw[:200].decode("utf-8", errors="replace")
                     raise RuntimeError(f"non-JSON response: {snippet!r}") from e
-                # 4. 类型检查：必须是对象
+                # 4. Type check: must be an object
                 if not isinstance(data, dict):
                     raise RuntimeError(f"manifest is not an object, got {type(data).__name__}")
-                # 5. 必要字段完整性检查
+                # 5. Required field completeness check
                 missing = [k for k in ("app_name", "version", "files") if k not in data]
                 if missing:
                     raise RuntimeError(f"missing required fields: {missing}")
@@ -285,43 +285,44 @@ def _fetch_manifest(url, max_retries=3):
 
 def _can_reach_server(update_url, timeout=2.0):
     """
-    快速预检：用原生 socket 判断 UPDATE_URL 对应 host:port 是否可达。
-    目的是在断网/网卡禁用/服务器完全宕机时，2 秒内快速跳过更新检查，
-    避免进入 3 次 × 10 秒 = 33 秒的 manifest 下载重试，阻塞 splash。
-    返回 True 表示"可能可达"（仅 TCP 层通，不代表 HTTP 层一定正常），
-    返回 False 表示明确不可达。
+    Quick pre-check: use a raw socket to judge whether the host:port of UPDATE_URL is reachable.
+    The goal is to skip the update check within 2 seconds when the network is down / NIC disabled /
+    server is fully down, avoiding 3 x 10s = 33s of manifest download retries blocking the splash.
+    Returns True meaning "possibly reachable" (only TCP layer works, HTTP layer may still fail),
+    returns False meaning definitely unreachable.
     """
     try:
         from urllib.parse import urlparse
         u = urlparse(update_url if update_url.endswith("/") else update_url + "/")
         host = u.hostname
         if not host:
-            return True  # 无效 URL，交给上层再判定
+            return True  # invalid URL, let the upper layer decide
         if u.scheme == "https":
             port = u.port or 443
         elif u.scheme == "http":
             port = u.port or 80
         else:
-            return True  # 未知协议跳过预检
-        # socket.create_connection = DNS + TCP SYN，timeout 内快速失败
+            return True  # unknown protocol, skip pre-check
+        # socket.create_connection = DNS + TCP SYN, fails fast within timeout
         with socket.create_connection((host, port), timeout=timeout):
             return True
-    except (socket.gaierror,         # DNS 解析失败（域名不存在）
-            socket.timeout,          # DNS/TCP 超时
-            TimeoutError,            # 部分平台的超时别名
-            ConnectionRefusedError,  # host 可达但端口没开
-            OSError):                # 网卡禁用、无路由、网线拔掉等(10051/ENETUNREACH)
+    except (socket.gaierror,         # DNS resolution failed (domain does not exist)
+            socket.timeout,          # DNS/TCP timeout
+            TimeoutError,            # timeout alias on some platforms
+            ConnectionRefusedError,  # host reachable but port not open
+            OSError):                # NIC disabled, no route, cable unplugged etc (10051/ENETUNREACH)
         return False
     except Exception:
-        return True  # 预检自身异常时不拦截，交由上层 HTTP 请求兜底
+        return True  # if the pre-check itself errors, do not block; let the upper HTTP request fall back
 
 
 def _url_head_ok(url, timeout=5.0, max_retries=2):
     """
-    轻量 HTTP HEAD 探测，用于在批量下载前验证「远端版本目录是否真实存在」。
-    —— 避免服务器只更新了 manifest 但忘了同步 GreaterWMS-{version}-{Platform}/ 文件夹时，
-       触发 _download 对 404 文件 3×60s 重试，splash 卡死近 3 分钟。
-    返回 (ok: bool, reason: str)。
+    Lightweight HTTP HEAD probe to verify whether the remote version directory actually exists before bulk download.
+    -- Avoids the case where the server only updated the manifest but forgot to sync the
+       GreaterWMS-{version}-{Platform}/ folder, which would trigger _download to retry 3x60s on a 404 file,
+       freezing the splash for nearly 3 minutes.
+    Returns (ok: bool, reason: str).
     """
     last_reason = ""
     for attempt in range(1, max_retries + 1):
@@ -337,7 +338,7 @@ def _url_head_ok(url, timeout=5.0, max_retries=2):
         except urllib.error.HTTPError as e:
             last_reason = f"HTTP {e.code}"
             if e.code == 404:
-                return False, last_reason  # 404 无需重试，立即判定"文件夹不存在"
+                return False, last_reason  # 404 needs no retry, immediately judge "folder does not exist"
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             last_reason = f"{type(e).__name__}"
         except Exception as e:
@@ -350,41 +351,54 @@ def _url_head_ok(url, timeout=5.0, max_retries=2):
 def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None,
                            new_exe_path=None):
     """
-    生成更新脚本（update.bat / update.sh），返回脚本路径。
+    Generate the update script (update.bat / update.sh) and return its path.
 
-    参数：
-      - new_exe_path：远端版本号对应的新 exe 的绝对路径（例如
-         {app_dir}/GreaterWMS-3.0.1-Windows.exe）。当版本升级导致 exe 名
-        包含版本号变化时，必须传该值；否则 bat 最后仍会 start 旧版本
-        号的 exe（sys.executable），导致重启后内置 version 仍是旧值
-        → 再次判定更新 → 死循环（用户看到"闪退"）。
+    Args:
+      - new_exe_path: absolute path of the new exe corresponding to the remote version
+        (e.g. {app_dir}/GreaterWMS-3.0.1-Windows.exe). When a version upgrade changes the
+        exe name, this value must be passed; otherwise the bat will still start the old
+        version's exe (sys.executable), leaving the built-in version as the old value
+        after restart -> update detected again -> infinite loop (user sees "flash exit").
     """
     is_win = sys.platform == "win32"
     exe_name = os.path.basename(sys.executable)
     exe_path = sys.executable
-    # 优先启动新 exe（版本号变化时新 exe 是另一个文件），否则回退到当前 exe
+    # Prefer starting the new exe (when version changes the new exe is a different file), otherwise fall back to the current exe
     target_exe_path = new_exe_path if new_exe_path and os.path.isabs(new_exe_path) else exe_path
     target_exe_name = os.path.basename(target_exe_path)
 
+    crash_log = os.path.join(app_dir, "update_crash.log")
     if is_win:
         script_path = os.path.join(app_dir, "update.bat")
         lines = ["@echo off"]
         lines.append(f':wait')
-        # 用临时文件中转，避免 tasklist|find 管道死锁（CREATE_NO_WINDOW 下 find stdin 卡 EOF）
+        # Use a temp file as intermediary to avoid the tasklist|find pipe deadlock (find's stdin hangs on EOF under CREATE_NO_WINDOW)
         lines.append(f'tasklist /fi "imagename eq {exe_name}" >"%TEMP%\\_bomiot_wait.tmp" 2>nul')
         lines.append(f'find /i "{exe_name}" "%TEMP%\\_bomiot_wait.tmp" >nul 2>nul')
         lines.append(f'if not errorlevel 1 ( del "%TEMP%\\_bomiot_wait.tmp" >nul 2>nul & ping -n 2 127.0.0.1 >nul 2>nul & goto wait )')
         lines.append(f'del "%TEMP%\\_bomiot_wait.tmp" >nul 2>nul')
-        lines.append(f'xcopy /Y /S /E /I "{temp_dir}" "{app_dir}" >nul 2>nul')
-        # 显式双保险：服务器 manifest 覆盖本地 manifest
+        # /H copies hidden+system files (e.g. .gitignore); redirect output to temp log for diagnosis on failure
+        lines.append(f'xcopy /Y /S /E /I /H "{temp_dir}" "{app_dir}" >"%TEMP%\\_bomiot_xcopy.log" 2>&1')
+        # Bug fix: detect xcopy failure. On error, log and abort — do NOT start the new exe
+        # with a half-overwritten app dir (would leave the install in an inconsistent state).
+        lines.append(f'if errorlevel 1 goto copyfail')
+        lines.append(f'del "%TEMP%\\_bomiot_xcopy.log" >nul 2>nul')
+        lines.append(f'goto copyok')
+        lines.append(f':copyfail')
+        lines.append(f'echo [Update] xcopy failed ^(errorlevel^>^=1^), update aborted. >> "{crash_log}"')
+        lines.append(f'type "%TEMP%\\_bomiot_xcopy.log" >> "{crash_log}" 2>nul')
+        lines.append(f'del "%TEMP%\\_bomiot_xcopy.log" >nul 2>nul')
+        lines.append(f'exit /b 1')
+        lines.append(f':copyok')
+        # Explicit double insurance: server manifest overwrites local manifest
         if manifest_name:
             lines.append(f'copy /Y "{os.path.join(temp_dir, manifest_name)}" "{os.path.join(app_dir, manifest_name)}" >nul 2>nul')
         lines.append(f'rd /S /Q "{temp_dir}" 2>nul')
         for f in to_delete:
             lines.append(f'del /F /Q "{os.path.join(app_dir, f)}" 2>nul')
-        # 先启动新 exe（target_exe_path），再用 ping 做 3s 延迟后删掉旧 exe（仅当新 exe 名 != 旧 exe 名时才需要删旧版）
-        #   - 不直接重命名旧 exe（文件占用可能失败）
-        #   - 不在 xcopy 之前删（旧 exe 正在运行）
+        # Start the new exe (target_exe_path) first, then delete the old exe after a 3s ping delay (only needed when new exe name != old exe name)
+        #   - do not directly rename the old exe (file lock may fail)
+        #   - do not delete before xcopy (old exe is still running)
         lines.append(f'start "" /MIN "{target_exe_path}"')
         if target_exe_name.lower() != exe_name.lower():
             lines.append(f'ping -n 4 127.0.0.1 >nul 2>nul')
@@ -396,8 +410,12 @@ def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None,
         script_path = os.path.join(app_dir, "update.sh")
         lines = ["#!/bin/bash"]
         lines.append(f'while pgrep -f "{exe_path}" > /dev/null 2>&1; do sleep 1; done')
-        lines.append(f'cp -rf "{temp_dir}"/* "{app_dir}"/')
-        # 显式双保险：服务器 manifest 覆盖本地 manifest
+        # Use "{temp_dir}"/. so hidden files (e.g. .gitignore) are also copied; * does not match dotfiles
+        lines.append(f'if ! cp -rf "{temp_dir}"/. "{app_dir}"/ 2>> "{crash_log}"; then')
+        lines.append(f'    echo "[Update] cp failed, update aborted." >> "{crash_log}"')
+        lines.append(f'    exit 1')
+        lines.append(f'fi')
+        # Explicit double insurance: server manifest overwrites local manifest
         if manifest_name:
             lines.append(f'cp -f "{os.path.join(temp_dir, manifest_name)}" "{os.path.join(app_dir, manifest_name)}" 2>/dev/null')
         lines.append(f'rm -rf "{temp_dir}"')
@@ -417,8 +435,8 @@ def _generate_update_script(app_dir, temp_dir, to_delete, manifest_name=None,
 
 def check_update(status_label=None):
     """
-    检查并执行增量更新。
-    返回 True 表示已触发更新（调用方应退出），False 表示无需更新。
+    Check and apply the incremental update.
+    Returns True if an update was triggered (caller should exit), False if no update needed.
     """
     app_dir = _app_dir()
     if not UPDATE_URL or not UPDATE_URL.strip():
@@ -430,20 +448,20 @@ def check_update(status_label=None):
     print(f"[Update] Manifest file name: {manifest_name}")
     print(f"[Update] Manifest URL: {UPDATE_URL}{manifest_name}")
 
-    # 读本地 manifest（和远端服务器用同一个文件名）
+    # Read local manifest (same filename as on the remote server)
     local_manifest_path = os.path.join(app_dir, manifest_name)
     if not os.path.exists(local_manifest_path):
-        return False  # 没有 manifest，跳过
+        return False  # no manifest, skip
     try:
         with open(local_manifest_path, encoding="utf-8") as f:
             local_manifest = json.load(f)
     except Exception:
         return False
 
-    # 读 .gitignore 规则
+    # Read .gitignore rules
     ignore_patterns = _read_gitignore(app_dir)
 
-    # ========= 快速网络预检（2s，避免断网卡 33s）=========
+    # ========= Quick network pre-check (2s, avoid 33s hang when offline) =========
     if status_label:
         status_label.config(text="正在检查更新...")
         status_label.update()
@@ -455,7 +473,7 @@ def check_update(status_label=None):
             status_label.update()
         return False
 
-    # 下载远端 manifest（和本地产物用同一个文件名）
+    # Download remote manifest (same filename as the local artifact)
     manifest_url = f"{UPDATE_URL}{manifest_name}"
     print(f"[Update] Downloading remote manifest: {manifest_url}")
     try:
@@ -466,7 +484,7 @@ def check_update(status_label=None):
         _elapsed = _t.time() - _t0
         print(f"[Update] Remote manifest downloaded: {_size_kb:.1f}KB ({_elapsed:.1f}s)")
     except urllib.error.HTTPError as e:
-        # HTTP 层面的错误（404、500 等），服务器未部署或临时故障
+        # HTTP-level error (404, 500, etc.), server not deployed or temporary failure
         err_msg = f"更新检查失败：HTTP {e.code}，跳过"
         print(f"[Update] {err_msg}")
         if status_label:
@@ -474,7 +492,7 @@ def check_update(status_label=None):
             status_label.update()
         return False
     except urllib.error.URLError as e:
-        # 网络层错误（DNS 失败、连接超时、无网络等）
+        # Network-level error (DNS failure, connection timeout, no network, etc.)
         reason = str(e.reason)[:40]
         err_msg = f"更新检查失败：网络异常，跳过"
         print(f"[Update] {err_msg} ({reason})")
@@ -483,7 +501,7 @@ def check_update(status_label=None):
             status_label.update()
         return False
     except (TimeoutError, OSError) as e:
-        # 直接抛出的 socket 级异常（部分 urllib 版本不包进 URLError）
+        # Directly raised socket-level exceptions (some urllib versions don't wrap them in URLError)
         # e.g. socket.timeout / ConnectionRefusedError / ENETUNREACH(10051)
         reason = f"{type(e).__name__}: {str(e)[:40]}"
         err_msg = f"更新检查失败：网络异常，跳过"
@@ -493,7 +511,7 @@ def check_update(status_label=None):
             status_label.update()
         return False
     except Exception as e:
-        # 其它：空响应、非JSON内容、缺字段、超时重试耗尽
+        # Others: empty response, non-JSON content, missing fields, timeout retries exhausted
         reason = str(e)[:60]
         err_msg = f"更新检查失败：服务器无响应，跳过"
         print(f"[Update] {err_msg} ({reason})")
@@ -502,11 +520,11 @@ def check_update(status_label=None):
             status_label.update()
         return False
 
-    # 版本号快速相等跳过（服务器 manifest 为最终真源，不做 >/< 方向判断，支持版本回滚）
-    # —— 仅当"远端版本号 == 编译进 exe 的硬编码版本号"时，视为无变化，直接跳过，
-    #    避免 1-10s 的本地 SHA256 全量扫描（日常 95% 场景命中）。
-    #    其余任何情况（远端更高 = 升级 / 远端更低 = 回滚 / 版本一致但文件怀疑损坏）
-    #    一律进入 hash 比对，以远端 manifest.files 为基准对齐。
+    # Quick version-equality skip (server manifest is the source of truth; no >/< direction check, supports rollback)
+    # -- Only when "remote version == hardcoded version compiled into exe" do we treat it as unchanged and skip directly,
+    #    avoiding a 1-10s full local SHA256 scan (hits 95% of daily scenarios).
+    #    In all other cases (remote higher = upgrade / remote lower = rollback / version matches but files suspected corrupt)
+    #    we always enter the hash comparison to align against remote manifest.files.
     if remote_manifest.get("app_name") != app_name:
         return False
     _remote_ver = remote_manifest.get("version", "0")
@@ -519,8 +537,8 @@ def check_update(status_label=None):
 
     remote_version = _remote_ver
     remote_files = remote_manifest.get("files", {})
-    # 文件下载 base: {UPDATE_URL}GreaterWMS-{version}-{Platform}/
-    # 注：回滚场景（远端版本 < binary 版本）下拼接出的是旧版本目录，服务器需保留对应版本文件夹
+    # File download base: {UPDATE_URL}GreaterWMS-{version}-{Platform}/
+    # Note: in rollback scenarios (remote version < binary version) the concatenated path is the old version directory; the server must keep the corresponding version folder
     file_base_url = f"{UPDATE_URL}{app_name}-{remote_version}-{_display}/"
 
     _local_ver = local_manifest.get("version", "?")
@@ -535,35 +553,35 @@ def check_update(status_label=None):
     print(f"[Update] {_direction} needed: binary={version} local_manifest={_local_ver} remote={remote_version}")
 
     # ================================================================
-    # 比对：双 manifest 交集模型（remote.files = A；local.files = B）
-    #   A ∩ B 且 hash(A) != hash(B)  → 下载更新（交集）
-    #   A − B （远端声明、本地没有）    → 下载新增（如新版本 exe）
-    #   B − A （本地声明、远端已删除）  → 列入 to_delete（如旧版本 exe、CI 已停止产出的 pyd/dll）
+    # Diff: dual-manifest intersection model (remote.files = A; local.files = B)
+    #   A ∩ B and hash(A) != hash(B)  → download update (intersection)
+    #   A − B (declared remotely, absent locally)  → download new (e.g. new version exe)
+    #   B − A (declared locally, removed remotely)  → add to to_delete (e.g. old version exe, pyd/dll no longer produced by CI)
     #
-    # 用户数据（dbs/ logs/ *.sqlite3 auth_key.py bomiot_ready.lock 等）
-    # 本来就不在 local.files（CI 生成 manifest 时走 .gitignore），所以不在 B，
-    # 永远不会进入 to_delete → 无需额外 protect-list。
+    # User data (dbs/ logs/ *.sqlite3 auth_key.py bomiot_ready.lock etc.)
+    # is never in local.files (CI applies .gitignore when generating the manifest), so not in B,
+    # and never enters to_delete → no extra protect-list needed.
     #
-    # 保底：如果本地 manifest 缺 files（老版本、异常格式），退化为「只看远端」
-    # 单向模式（不做删除），避免误删。
+    # Fallback: if local manifest lacks files (old version, malformed), degrade to "remote-only"
+    # one-way mode (no deletion) to avoid accidental deletion.
     # ================================================================
     to_download = []
     to_delete = []
     local_files = local_manifest.get("files") if isinstance(local_manifest, dict) else None
     if isinstance(local_files, dict):
-        # ==== 标准路径：双 manifest 双向差分 ====
+        # ==== Standard path: dual-manifest bidirectional diff ====
         A_keys = set(remote_files.keys())
         B_keys = set(local_files.keys())
-        # 1) A ∩ B：交集，逐文件比较（大文件走块级增量，小文件走整文件 hash）
+        # 1) A ∩ B: intersection, compare per file (large files use block-level incremental, small files use full-file hash)
         for rel in A_keys & B_keys:
             remote_entry = remote_files[rel]
             remote_hash = _entry_sha256(remote_entry)
             local_path = os.path.join(app_dir, rel.replace("/", os.sep))
-            # 保护锁：本地 manifest 声明过但运行时被用户删掉了 → 按"缺失"重下
+            # Safety lock: a file declared in local manifest but deleted by the user at runtime → re-download as "missing"
             if not os.path.isfile(local_path):
                 to_download.append({"path": rel})
                 continue
-            # 块级增量：远端是块级条目 → 比对每个块的 hash
+            # Block-level incremental: remote is a block-level entry → compare each block's hash
             if _is_block_entry(remote_entry):
                 remote_blocks = remote_entry["blocks"]
                 block_size = remote_entry.get("block_size", BLOCK_SIZE)
@@ -571,11 +589,11 @@ def check_update(status_label=None):
                     local_blocks = _hash_blocks(local_path, block_size)
                 except Exception:
                     local_blocks = []
-                # 块数一致且每块 hash 都相同 → 文件未变
+                # Same number of blocks and every block hash matches → file unchanged
                 if (len(local_blocks) == len(remote_blocks)
                         and all(lb == rb for lb, rb in zip(local_blocks, remote_blocks))):
                     continue
-                # 收集变化的块索引（本地没有的块也算变化）
+                # Collect changed block indices (blocks absent locally also count as changed)
                 changed = [
                     i for i in range(len(remote_blocks))
                     if i >= len(local_blocks) or local_blocks[i] != remote_blocks[i]
@@ -588,23 +606,23 @@ def check_update(status_label=None):
                     "sha256": remote_hash,
                 })
             else:
-                # 小文件：整文件 hash 比对
+                # Small file: full-file hash comparison
                 try:
                     local_hash = _sha256_file(local_path)
                 except Exception:
                     local_hash = None
                 if local_hash != remote_hash:
                     to_download.append({"path": rel})
-        # 2) A − B：远端新增（本地 manifest 未声明过的新文件）→ 整文件下载
+        # 2) A − B: remote new files (never declared in local manifest) → full-file download
         for rel in A_keys - B_keys:
             to_download.append({"path": rel})
-        # 3) B − A：CI 在上个版本声明过但本次远端 manifest 里消失了 → 视为升级/回滚时移除
-        #    同时做一层双保险：这些条目必须同时能通过 _scan_local_files 使用的
-        #    .gitignore + manifest-*.json 排除规则，防止 B−A 被恶意 manifest 用来
-        #    指鹿为马删除用户自定义文件。
+        # 3) B − A: files declared by CI in the previous version but absent from this remote manifest → treat as removed during upgrade/rollback
+        #    Also add a double-insurance layer: these entries must also pass the
+        #    .gitignore + manifest-*.json exclusion rules used by _scan_local_files,
+        #    to prevent a malicious manifest from using B−A to delete user custom files.
         protected_prefix = ("dbs/", "logs/", "__pycache__/")
         for rel in B_keys - A_keys:
-            # 永远不删 manifest-*.json / update.* / 已知运行时目录前缀
+            # Never delete manifest-*.json / update.* / known runtime directory prefixes
             basename = os.path.basename(rel)
             if basename in ("update.bat", "update.sh", "manifest.json"):
                 continue
@@ -618,15 +636,15 @@ def check_update(status_label=None):
                     break
             if skip_prefix:
                 continue
-            # 再用 .gitignore 过滤一遍（用户自己加的忽略规则在 B−A 这里不删）
+            # Filter once more with .gitignore (user-added ignore rules are not deleted in B−A)
             if _is_ignored(rel_norm, ignore_patterns):
                 continue
-            # 最终保险：只有当本地真的存在这个被声明过的路径时才删
+            # Final insurance: only delete if the declared path actually exists locally
             local_path = os.path.join(app_dir, rel.replace("/", os.sep))
             if os.path.isfile(local_path):
                 to_delete.append(rel)
     else:
-        # ==== 退化路径：本地 manifest 无 files → 单向只看远端（不删任何东西）====
+        # ==== Fallback path: local manifest has no files → remote-only one-way (no deletion) ====
         print("[Update] local manifest missing 'files', falling back to one-way compare (no delete)")
         for rel, remote_entry in remote_files.items():
             remote_hash = _entry_sha256(remote_entry)
@@ -645,14 +663,14 @@ def check_update(status_label=None):
           f"(remote.files={len(remote_files)}  local.files={len(local_files) if isinstance(local_files, dict) else 'N/A'})")
 
     if not to_download and not to_delete:
-        return False  # 没有实际变化
+        return False  # no actual change
 
-    # 下载变化的文件到临时目录
+    # Download changed files into a temp directory
     temp_dir = tempfile.mkdtemp(prefix="bomiot_update_")
 
-    # ========= 前置探测：远端版本目录是否真实存在 =========
-    # 防止服务器只更新了 manifest 但忘了同步 GreaterWMS-{version}-{Platform}/ 文件夹，
-    # 否则会在首个文件 404 时触发 3×60s 下载重试卡死 splash。
+    # ========= Pre-probe: does the remote version directory actually exist? =========
+    # Prevent the case where the server only updated the manifest but forgot to sync the GreaterWMS-{version}-{Platform}/ folder,
+    # which would otherwise trigger 3x60s download retries on the first 404 file and freeze the splash.
     if to_download:
         _probe_path = to_download[0]["path"]
         _probe_url = file_base_url + _probe_path
@@ -677,13 +695,13 @@ def check_update(status_label=None):
         try:
             blocks = item.get("blocks")
             if blocks:
-                # ===== 块级增量：复制本地文件 + 只下载变化的块 =====
+                # ===== Block-level incremental: copy local file + download only changed blocks =====
                 local_path = os.path.join(app_dir, path.replace("/", os.sep))
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 if os.path.isfile(local_path):
                     shutil.copyfile(local_path, dest)
                 else:
-                    # 本地无文件：从零创建，用 Range 下载所有块
+                    # No local file: create from scratch, download all blocks via Range
                     open(dest, "wb").close()
                 block_size = item["block_size"]
                 remote_size = item.get("size")
@@ -693,10 +711,10 @@ def check_update(status_label=None):
                     byte_end = min((bi + 1) * block_size, remote_size) - 1 if remote_size else byte_start + block_size - 1
                     ok = _download_range(url, dest, byte_start, byte_end)
                     if not ok:
-                        # 服务器不支持 Range，已整文件写入 dest
+                        # Server does not support Range, the whole file has been written to dest
                         range_ok = False
                         break
-                # 校验整文件 SHA256，失败则回退整文件下载
+                # Verify the whole-file SHA256; fall back to full download on mismatch
                 if range_ok:
                     try:
                         actual = _sha256_file(dest)
@@ -709,7 +727,7 @@ def check_update(status_label=None):
                 _download(url, dest)
         except Exception as e:
             print(f"下载失败: {path} - {e}")
-            # 问题③：下载失败时清理临时目录，避免系统 temp 堆积 bomiot_update_* 垃圾
+            # Issue ③: clean up the temp directory on download failure to avoid bomiot_update_* garbage piling up in system temp
             shutil.rmtree(temp_dir, ignore_errors=True)
             if status_label:
                 status_label.config(text="更新下载失败，跳过")
@@ -720,21 +738,21 @@ def check_update(status_label=None):
         status_label.config(text="更新下载完成，正在应用...")
         status_label.update()
 
-    # 将新版本的 manifest 也写入 temp_dir，随 xcopy/cp 一起覆盖到 app_dir。
-    # —— 因为 CI 生成 manifest 时是「先扫目录再写 manifest」，所以远端 files 不包含 manifest 自身。
-    #    如果不在此显式写出，重启后本地 manifest 仍是旧版本号，会白跑一次检查周期。
+    # Also write the new-version manifest into temp_dir, so it gets copied into app_dir along with xcopy/cp.
+    # -- Because CI generates the manifest by "scan directory first, then write manifest", remote files does not include the manifest itself.
+    #    If we don't write it explicitly here, the local manifest will still be the old version after restart, wasting one check cycle.
     new_manifest_path = os.path.join(temp_dir, manifest_name)
     try:
         with open(new_manifest_path, "w", encoding="utf-8") as f:
             json.dump(remote_manifest, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        # 写 manifest 失败不阻止更新（否则更新失败但旧二进制还在），仅打日志
+        # Failing to write the manifest does not block the update (otherwise the update fails but the old binary remains), just log it
         print(f"[Update] Warning: failed to write new manifest to temp: {e}")
 
-    # 算出新 exe 在客户端目录里的绝对路径（当 version 或 platform display 变时，
-    # EXE 名固定为 app_name（如 GreaterWMS.exe），不再带版本号。
-    # 版本号通过 manifest 的 sha256/块级 hash 比对来判断是否需要更新，
-    # 同名 EXE 被 xcopy 覆盖后，新的内置 version 常量自然生效，不会死循环。
+    # Compute the absolute path of the new exe in the client directory (when version or platform display changes,
+    # the EXE name is fixed to app_name (e.g. GreaterWMS.exe), no longer carrying the version number.
+    # The version number is judged for update via the manifest's sha256/block-level hash comparison;
+    # after the same-named EXE is overwritten by xcopy, the new built-in version constant naturally takes effect, no infinite loop.)
     _plat_is_win = sys.platform == "win32"
     if _plat_is_win:
         new_exe_name = f"{app_name}.exe"
@@ -742,14 +760,14 @@ def check_update(status_label=None):
         new_exe_name = app_name
     new_exe_path = os.path.join(app_dir, new_exe_name)
 
-    # 生成更新脚本（传 manifest_name 进去，生成显式 copy 行，保证服务器 manifest 覆盖本地）
+    # Generate update script (pass manifest_name in to generate explicit copy lines, ensuring server manifest overwrites local)
     script_path = _generate_update_script(
         app_dir, temp_dir, to_delete,
         manifest_name=manifest_name,
         new_exe_path=new_exe_path,
     )
 
-    # 启动脚本（静默：不弹任何 cmd / terminal 黑框）
+    # Start the script (silent: do not pop up any cmd / terminal black window)
     is_win = sys.platform == "win32"
     _started_script = False
     _script_err = ""
@@ -757,12 +775,12 @@ def check_update(status_label=None):
         if is_win:
             CREATE_NO_WINDOW          = int(getattr(subprocess, "CREATE_NO_WINDOW",          0x08000000))
             CREATE_NEW_PROCESS_GROUP  = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP",  0x00000200))
-            # 注意：不要加 DETACHED_PROCESS。它会导致子进程（cmd/xcopy）在
-            # 无控制台句柄环境下 xcopy 返回 err=4 "系统找不到指定的路径"，
-            # 使更新文件无法被复制。CREATE_NO_WINDOW 已足够隐藏窗口。
+            # Note: do NOT add DETACHED_PROCESS. It causes child processes (cmd/xcopy) to run without
+            # a console handle, making xcopy return err=4 "The system cannot find the path specified",
+            # so update files cannot be copied. CREATE_NO_WINDOW is enough to hide the window.
             flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
             startupinfo = subprocess.STARTUPINFO()
-            # STARTF_USESHOWWINDOW = 1，SW_HIDE = 0
+            # STARTF_USESHOWWINDOW = 1, SW_HIDE = 0
             try:
                 startupinfo.dwFlags = int(getattr(subprocess, "STARTF_USESHOWWINDOW", 1))
             except Exception:
@@ -795,7 +813,7 @@ def check_update(status_label=None):
         import traceback as _tb
         _script_err = f"{type(e).__name__}: {e}\n{_tb.format_exc()}"
         print(f"[Update] FATAL: failed to start update script.\n{_script_err}")
-        # 失败时把 trace 落盘，方便用户找闪退原因
+        # On failure, dump the trace to disk so the user can find the reason for the flash exit
         try:
             crash_log = os.path.join(app_dir, "update_crash.log")
             with open(crash_log, "a", encoding="utf-8") as f:
@@ -807,7 +825,7 @@ def check_update(status_label=None):
             pass
 
     if not _started_script:
-        # 启动脚本失败：清理残留 + 不执行退出（继续跑 Django 启动，避免闪退+用户完全进不去）
+        # Script start failed: clean up leftovers + do not exit (continue with Django startup, avoid flash exit + user completely locked out)
         shutil.rmtree(temp_dir, ignore_errors=True)
         try: os.remove(script_path)
         except Exception: pass
@@ -816,13 +834,13 @@ def check_update(status_label=None):
             status_label.update()
         return False
 
-    # 给 bat 子进程 300ms 启动缓冲（防止本进程过快退出，bat 还没起来就被系统把父进程组里的子进程一起 terminate）
+    # Give the bat child process a 300ms startup buffer (prevent this process from exiting too fast, terminating child processes in the parent process group before bat even starts)
     sleep(0.3)
     return True
 
 
 if __name__ == "__main__":
-    # 顶层兜底：任何未被捕获的异常写入 update_crash.log，避免用户只能看到「窗口灭了」没有任何线索
+    # Top-level safety net: write any uncaught exception to update_crash.log, so the user doesn't just see "the window closed" with no clues
     _app_dir_root = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
     _crash_log = os.path.join(_app_dir_root, "update_crash.log")
     import traceback as _tb_main
@@ -888,12 +906,12 @@ if __name__ == "__main__":
     # Force window refresh to ensure splash is displayed before subsequent operations
     splash.update()
 
-    # 增量更新状态标签
+    # Incremental update status label
     status_label = tk.Label(splash, text="正在检查更新...", font=("Arial", 10), bg='white', fg='#888888')
     status_label.pack(side='bottom', pady=5)
     splash.update()
 
-    # 检查更新（有更新则生成脚本并退出，无更新则继续启动）
+    # Check for updates (if update found, generate script and exit; otherwise continue startup)
     if check_update(status_label):
         splash.destroy()
         sys.exit(0)

@@ -1,7 +1,38 @@
 name: Bomiot Build
 
-# APP_NAME / BASE_VERSION 不在此硬编码，由下方 step 从 launcher.py 自动读取
-# （launcher.py 是 app_name 与 version 的唯一来源，改一处即可）
+# APP_NAME / BASE_VERSION are not hardcoded here; they are read from launcher.py below.
+# (launcher.py is the single source of truth for app_name and version.)
+
+env:
+  # Shared Nuitka build params (used by all platforms, edit once)
+  # include-package and include-package-data share the same package list
+  BOMIOT_INCLUDE_PACKAGES: |
+    bomiot
+    django
+    fastapi
+    flask
+    orjson
+    uvicorn
+    pandas
+    openpyxl
+    watchdog
+    tomlkit
+    psutil
+    xlsxwriter
+    requests
+    httptools
+    aiofiles
+    starlette
+    bomiot_asgi
+    bomiot_message
+    bomiot_token
+    django_filters
+    rest_framework
+    rest_framework_csv
+    django_apscheduler
+    corsheaders
+    greaterwms
+    bomiot_test
 
 on:
   push:
@@ -21,7 +52,7 @@ jobs:
       # Check-out repository
       - uses: actions/checkout@v4
 
-      # 从 launcher.py 提取 app_name 与 version，作为全局唯一来源（改 launcher.py 一处即可）
+      # Extract app_name & version from launcher.py (single source of truth)
       - name: Read app_name & version from launcher.py
         shell: bash
         run: |
@@ -119,59 +150,8 @@ jobs:
             greaterwms/files.py=greaterwms/files.py
             greaterwms/task.py=greaterwms/task.py
           # Included packages
-          include-package-data: |
-            bomiot
-            django
-            fastapi
-            flask
-            orjson
-            uvicorn
-            pandas
-            openpyxl
-            watchdog
-            tomlkit
-            psutil
-            xlsxwriter
-            requests
-            httptools
-            aiofiles
-            starlette
-            bomiot_asgi
-            bomiot_message
-            bomiot_token
-            django_filters
-            rest_framework
-            rest_framework_csv
-            django_apscheduler
-            corsheaders
-            greaterwms
-            bomiot_test
-          include-package: |
-            bomiot
-            django
-            fastapi
-            flask
-            orjson
-            uvicorn
-            pandas
-            openpyxl
-            watchdog
-            tomlkit
-            psutil
-            xlsxwriter
-            requests
-            httptools
-            aiofiles
-            starlette
-            bomiot_asgi
-            bomiot_message
-            django_filters
-            rest_framework
-            rest_framework_csv
-            django_apscheduler
-            corsheaders
-            greaterwms
-            bomiot_test
+          include-package-data: ${{ env.BOMIOT_INCLUDE_PACKAGES }}
+          include-package: ${{ env.BOMIOT_INCLUDE_PACKAGES }}
           # Included modules
           include-module: |
             django.core.management
@@ -232,59 +212,8 @@ jobs:
             greaterwms/files.py=greaterwms/files.py
             greaterwms/task.py=greaterwms/task.py
           # Included packages
-          include-package-data: |
-            bomiot
-            django
-            fastapi
-            flask
-            orjson
-            uvicorn
-            pandas
-            openpyxl
-            watchdog
-            tomlkit
-            psutil
-            xlsxwriter
-            requests
-            httptools
-            aiofiles
-            starlette
-            bomiot_asgi
-            bomiot_message
-            bomiot_token
-            django_filters
-            rest_framework
-            rest_framework_csv
-            django_apscheduler
-            corsheaders
-            greaterwms
-            bomiot_test
-          include-package: |
-            bomiot
-            django
-            fastapi
-            flask
-            orjson
-            uvicorn
-            pandas
-            openpyxl
-            watchdog
-            tomlkit
-            psutil
-            xlsxwriter
-            requests
-            httptools
-            aiofiles
-            starlette
-            bomiot_asgi
-            bomiot_message
-            django_filters
-            rest_framework
-            rest_framework_csv
-            django_apscheduler
-            corsheaders
-            greaterwms
-            bomiot_test
+          include-package-data: ${{ env.BOMIOT_INCLUDE_PACKAGES }}
+          include-package: ${{ env.BOMIOT_INCLUDE_PACKAGES }}
           # Included modules
           include-module: |
             django.core.management
@@ -344,59 +273,10 @@ jobs:
             greaterwms/server.py=greaterwms/server.py
             greaterwms/receiver.py=greaterwms/receiver.py
             greaterwms/files.py=greaterwms/files.py
+            greaterwms/task.py=greaterwms/task.py
           # Included packages
-          include-package-data: |
-            bomiot
-            django
-            fastapi
-            flask
-            orjson
-            uvicorn
-            pandas
-            openpyxl
-            watchdog
-            tomlkit
-            psutil
-            xlsxwriter
-            requests
-            httptools
-            aiofiles
-            starlette
-            bomiot_asgi
-            bomiot_message
-            django_filters
-            rest_framework
-            rest_framework_csv
-            django_apscheduler
-            corsheaders
-            greaterwms
-            bomiot_test
-          include-package: |
-            bomiot
-            django
-            fastapi
-            flask
-            orjson
-            uvicorn
-            pandas
-            openpyxl
-            watchdog
-            tomlkit
-            psutil
-            xlsxwriter
-            requests
-            httptools
-            aiofiles
-            starlette
-            bomiot_asgi
-            bomiot_message
-            django_filters
-            rest_framework
-            rest_framework_csv
-            django_apscheduler
-            corsheaders
-            greaterwms
-            bomiot_test
+          include-package-data: ${{ env.BOMIOT_INCLUDE_PACKAGES }}
+          include-package: ${{ env.BOMIOT_INCLUDE_PACKAGES }}
           # Included modules
           include-module: |
             django.core.management
@@ -489,7 +369,7 @@ jobs:
               return False
 
           # Scan all files in build output
-          # 统一用 manifest-{os}-{arch}.json，客户端本地和服务器 releases/ 根目录是同一个文件名
+          # Use manifest-{os}-{arch}.json consistently; same filename on client side and server releases/ root
           manifest_name = "${{ steps.platform.outputs.manifest }}"
 
           files = {}
@@ -500,12 +380,12 @@ jobs:
                   full = os.path.join(root, fn)
                   rel = os.path.relpath(full, dist).replace(os.sep, "/")
 
-                  # Skip files matching .gitignore（dist 里的 .gitignore 是仓库原文件，已包含 dbs/ logs/ __pycache__ *.sqlite3 *.db *.log *.pyc 等全部忽略规则）
+                  # Skip files matching .gitignore (the .gitignore inside dist is the repo original, covering dbs/ logs/ __pycache__ *.sqlite3 *.db *.log *.pyc etc.)
                   if is_ignored(rel):
                       continue
 
-                  # 大文件（≥8MiB）用块级格式：记录整体 sha256 + 每块 sha256，
-                  # 客户端更新时只下载变化的块（HTTP Range），显著减少流量。
+                  # Large files (>=8MiB) use block format: store overall sha256 + per-block sha256,
+                  # so the client only downloads changed blocks (HTTP Range), significantly reducing traffic.
                   BLOCK_SIZE = 1024 * 1024
                   BLOCK_THRESHOLD = 8 * 1024 * 1024
                   file_size = os.path.getsize(full)
@@ -540,19 +420,19 @@ jobs:
           build_dir = "build"
           import shutil
 
-          # 1) Dist folder 内 manifest —— 客户端启动时从自己所在目录（GreaterWMS-3.0.0-Windows/）读取
+          # 1) Manifest inside dist folder — the client reads it from its own directory (e.g. GreaterWMS-3.0.0-Windows/)
           in_dist_manifest = os.path.join(dist, manifest_name)
           with open(in_dist_manifest, "w", encoding="utf-8") as f:
               json.dump(manifest, f, indent=2, ensure_ascii=False)
           print(f"Generated {in_dist_manifest}: {len(files)} files, {os.path.getsize(in_dist_manifest)} bytes")
 
-          # 2) build/manifest-{os}-{arch}.json —— 服务器 releases/ 根目录用
+          # 2) build/manifest-{os}-{arch}.json — used by the server releases/ root directory
           server_manifest = os.path.join(build_dir, manifest_name)
           shutil.copyfile(in_dist_manifest, server_manifest)
 
-          # 3) 确保 build/{APP_NAME}-{VERSION}-{Platform}/ 完整存在：
-          #    - Windows / Linux : dist 已经就是 folder_dir，无需 copy（rename-dist step 处理过）
-          #    - macOS           : dist 是 .app bundle（路径不同），需要 copytree 到版本目录
+          # 3) Ensure build/{APP_NAME}-{VERSION}-{Platform}/ exists fully:
+          #    - Windows / Linux : dist is already folder_dir, no copy needed (handled by rename-dist step)
+          #    - macOS           : dist is a .app bundle (different path), need copytree into the version folder
           folder_dir = os.path.join(build_dir, folder_name)
           if os.path.abspath(dist) != os.path.abspath(folder_dir):
               if os.path.exists(folder_dir):
